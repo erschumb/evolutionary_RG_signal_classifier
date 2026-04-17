@@ -1,7 +1,60 @@
+from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
 
+
+
+def write_merged_bed(
+    pos_results: list[dict],
+    neg_results: list[dict],
+    output_path: str,
+) -> None:
+    """
+    Write a merged BED file from pos and neg genomic coordinate results.
+
+    One BED line per (region, interval). Multi-interval regions produce
+    multiple lines. Output is sorted by chromosome and start position,
+    which is required by bcftools -R.
+
+    BED columns:
+        1. chrom
+        2. start (0-based, per BED convention)
+        3. end   (exclusive)
+        4. region_id
+        5. group   ("pos" or "neg")
+    """
+    rows = []
+    for results, group in [(pos_results, "pos"), (neg_results, "neg")]:
+        for region in results:
+            rid = region["region_id"]
+            for iv in region["intervals"]:
+                rows.append((iv["chrom"], iv["start"], iv["end"], rid, group))
+
+    # Natural chromosome sort: chr1, chr2, ... chr10, ... chrX, chrY
+    def chrom_sort_key(row):
+        chrom = row[0].replace("chr", "")
+        if chrom == "X":
+            return (23, row[1])
+        if chrom == "Y":
+            return (24, row[1])
+        if chrom == "M" or chrom == "MT":
+            return (25, row[1])
+        try:
+            return (int(chrom), row[1])
+        except ValueError:
+            return (99, row[1])  # anything unexpected goes last
+
+    rows.sort(key=chrom_sort_key)
+
+    with open(output_path, "w") as f:
+        for chrom, start, end, rid, group in rows:
+            f.write(f"{chrom}\t{start}\t{end}\t{rid}\t{group}\n")
+
+    n_pos = sum(1 for r in rows if r[4] == "pos")
+    n_neg = sum(1 for r in rows if r[4] == "neg")
+    print(f"Wrote {len(rows)} intervals to {output_path}")
+    print(f"  pos: {n_pos}, neg: {n_neg}")
 
 def write_bed_from_results(results, output_file):
     with open(output_file, "w") as f:
