@@ -8,3 +8,4 @@ __pycache__/
 notes/
 _archived/
 figures/
+data/bcftools/combined_vep_variants.tsv
