@@ -1,8 +1,10 @@
 # Ignore VS Code or Python junk
 __pycache__/
 *.pyc
+*.gz
 .env
 .vscode/
 
 notes/
 _archived/
+figures/
