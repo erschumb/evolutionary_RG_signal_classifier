@@ -800,69 +800,69 @@ def compute_rg_change_events(
 RG_EVENT_TYPES = ["no_change", "loss", "gain", "movement"]
 
 
-def plot_rg_change_events(
-    df_rg: pd.DataFrame,
-    region_by_id: dict,
-    dataset: str = "gnomad",
-    save: bool = True,
-) -> dict:
-    """
-    [Dataset-agnostic]
-    Four separate box plots: for each event type, fraction of the region's
-    missense variants that fall into that category. Compare pos vs neg.
-    """
-    df_events = compute_rg_change_events(df_rg, region_by_id)
-    df_events = df_events[df_events["rg_change_event"].notna()]
+# def plot_rg_change_events(
+#     df_rg: pd.DataFrame,
+#     region_by_id: dict,
+#     dataset: str = "gnomad",
+#     save: bool = True,
+# ) -> dict:
+#     """
+#     [Dataset-agnostic]
+#     Four separate box plots: for each event type, fraction of the region's
+#     missense variants that fall into that category. Compare pos vs neg.
+#     """
+#     df_events = compute_rg_change_events(df_rg, region_by_id)
+#     df_events = df_events[df_events["rg_change_event"].notna()]
 
-    # Per-region: fraction of missense variants in each event category
-    total_per_region = df_events.groupby(["region_id", "group"]).size().reset_index(name="total")
-    counts_per_region = (
-        df_events.groupby(["region_id", "group", "rg_change_event"])
-                 .size()
-                 .reset_index(name="n")
-    )
-    merged = counts_per_region.merge(total_per_region, on=["region_id", "group"])
-    merged["fraction"] = merged["n"] / merged["total"]
+#     # Per-region: fraction of missense variants in each event category
+#     total_per_region = df_events.groupby(["region_id", "group"]).size().reset_index(name="total")
+#     counts_per_region = (
+#         df_events.groupby(["region_id", "group", "rg_change_event"])
+#                  .size()
+#                  .reset_index(name="n")
+#     )
+#     merged = counts_per_region.merge(total_per_region, on=["region_id", "group"])
+#     merged["fraction"] = merged["n"] / merged["total"]
 
-    # Fill in zero-count combinations so every region has every event category
-    all_regions = merged[["region_id", "group"]].drop_duplicates()
-    full_index = all_regions.assign(key=1).merge(
-        pd.DataFrame({"rg_change_event": RG_EVENT_TYPES}).assign(key=1),
-        on="key",
-    ).drop(columns="key")
-    full = full_index.merge(
-        merged[["region_id", "group", "rg_change_event", "fraction"]],
-        on=["region_id", "group", "rg_change_event"], how="left",
-    )
-    full["fraction"] = full["fraction"].fillna(0)
+#     # Fill in zero-count combinations so every region has every event category
+#     all_regions = merged[["region_id", "group"]].drop_duplicates()
+#     full_index = all_regions.assign(key=1).merge(
+#         pd.DataFrame({"rg_change_event": RG_EVENT_TYPES}).assign(key=1),
+#         on="key",
+#     ).drop(columns="key")
+#     full = full_index.merge(
+#         merged[["region_id", "group", "rg_change_event", "fraction"]],
+#         on=["region_id", "group", "rg_change_event"], how="left",
+#     )
+#     full["fraction"] = full["fraction"].fillna(0)
 
-    results = {}
-    for event in RG_EVENT_TYPES:
-        sub = full[full["rg_change_event"] == event]
-        fig, res = _single_boxplot(
-            data=sub, x="group", y="fraction", order=["neg", "pos"],
-            title=f"RG change event: {event}",
-            ylabel=f"Fraction of missense in region",
-            dataset=dataset,
-            filename=f"rg_change_event_{event}",
-            save=save,
-        )
-        results[event] = res
+#     results = {}
+#     for event in RG_EVENT_TYPES:
+#         sub = full[full["rg_change_event"] == event]
+#         fig, res = _single_boxplot(
+#             data=sub, x="group", y="fraction", order=["neg", "pos"],
+#             title=f"RG change event: {event}",
+#             ylabel=f"Fraction of missense in region",
+#             dataset=dataset,
+#             filename=f"rg_change_event_{event}",
+#             save=save,
+#         )
+#         results[event] = res
 
-    # Overall chi² on event distribution
-    contingency = pd.crosstab(df_events["group"], df_events["rg_change_event"])
-    chi2, chi_p, dof, _ = stats.chi2_contingency(contingency)
-    print(f"\n── Overall χ² on event distribution ({dataset}) ──")
-    print(contingency)
-    print(f"  χ² = {chi2:.2f}, df = {dof}, p = {chi_p:.2e} "
-          f"{significance_stars(chi_p)}")
+#     # Overall chi² on event distribution
+#     contingency = pd.crosstab(df_events["group"], df_events["rg_change_event"])
+#     chi2, chi_p, dof, _ = stats.chi2_contingency(contingency)
+#     print(f"\n── Overall χ² on event distribution ({dataset}) ──")
+#     print(contingency)
+#     print(f"  χ² = {chi2:.2f}, df = {dof}, p = {chi_p:.2e} "
+#           f"{significance_stars(chi_p)}")
 
-    results["overall_chi2"] = {
-        "chi2": float(chi2), "dof": int(dof), "p": float(chi_p),
-        "sig": significance_stars(chi_p),
-        "contingency": contingency,
-    }
-    return results
+#     results["overall_chi2"] = {
+#         "chi2": float(chi2), "dof": int(dof), "p": float(chi_p),
+#         "sig": significance_stars(chi_p),
+#         "contingency": contingency,
+#     }
+#     return results
 
 def plot_rg_change_events_stacked(
     df_rg: pd.DataFrame,
@@ -1295,3 +1295,172 @@ def plot_isolated_vs_clustered_loss(
  
     return all_stats
  
+
+def plot_rg_gain_transitions(
+    df_events: pd.DataFrame,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> dict:
+    """
+    [Dataset-agnostic]
+    Heatmap of transitions (source → target) for missense variants classified
+    as 'gain' events (i.e., mutations that create R or G).
+
+    Expects df_events to have:
+        rg_change_event (must include 'gain')
+        rg_role          ('R' or 'G')  # the residue gained
+        aa_from, aa_to   (single amino acid letters)
+        group            ('pos' or 'neg')
+    """
+
+    # Restrict to gain events where R/G is the TARGET
+    sub = df_events[
+        (df_events["rg_change_event"] == "gain") &
+        # df_events["rg_role"].isin(["R", "G"]) &
+        df_events["before_aa"].notna() &
+        (df_events["before_aa"].str.len() == 1) &
+        (df_events["before_aa"] != "*")
+    ].copy()
+    # print(sub)
+
+    all_aa = list("ACDEFGHIKLMNPQRSTVWY")
+    targets = ["R", "G"]
+
+    # Build 4-row matrix: ?→R pos, ?→R neg, ?→G pos, ?→G neg
+    row_labels = []
+    counts_rows = []
+    enrichment_rows = []
+
+    for target in targets:
+        for group in ["pos", "neg"]:
+            row_labels.append(f"?→{target} ({group})")
+
+            group_sub = sub[
+                (sub["after_aa"] == target) &
+                (sub["group"] == group)
+            ]
+
+            counts = group_sub["before_aa"].value_counts().reindex(all_aa, fill_value=0)
+            # print(counts)
+            counts_rows.append(counts.values)
+
+            # Enrichment vs uniform expectation over 19 non-target residues
+            non_target_total = counts.drop(target, errors="ignore").sum()
+            print(non_target_total)
+            expected = non_target_total / 19 if non_target_total > 0 else 0
+            print(expected)
+            enrichment = np.where(
+                expected > 0,
+                counts.values / expected,
+                np.nan,
+            )
+            enrichment_rows.append(enrichment)
+    # print(enrichment_rows)
+    counts_matrix = np.vstack(counts_rows).astype(int)
+    enrichment_matrix = np.vstack(enrichment_rows)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log2_enrichment = np.log2(enrichment_matrix)
+
+    # Per-cell Fisher's exact (pos vs neg) for each (source → target)
+    sig_matrix = np.full_like(counts_matrix, "", dtype=object)
+    p_records = []
+    n_tests = 0
+
+    for t_idx, target in enumerate(targets):
+        pos_row = counts_matrix[t_idx * 2]
+        neg_row = counts_matrix[t_idx * 2 + 1]
+
+        pos_total = pos_row.sum()
+        neg_total = neg_row.sum()
+
+        for s_idx, source in enumerate(all_aa):
+            if source == target:
+                continue
+
+            pos_in = pos_row[s_idx]
+            neg_in = neg_row[s_idx]
+
+            if pos_in + neg_in < 3:
+                continue
+
+            pos_out = pos_total - pos_in
+            neg_out = neg_total - neg_in
+
+            _, p_raw = stats.fisher_exact(
+                [[pos_in, pos_out], [neg_in, neg_out]]
+            )
+
+            p_records.append({
+                "source": source,
+                "target": target,
+                "pos_count": int(pos_in),
+                "neg_count": int(neg_in),
+                "p_raw": float(p_raw),
+            })
+            n_tests += 1
+
+    # Bonferroni correction
+    p_df = pd.DataFrame(p_records)
+    n_tests = 1
+    if len(p_df) > 0:
+        p_df["p_bonf"] = (p_df["p_raw"] * n_tests).clip(upper=1.0)
+        p_df["sig"] = p_df["p_bonf"].apply(significance_stars)
+
+        for _, r in p_df.iterrows():
+            if r["sig"] == "n.s.":
+                continue
+            t_idx = targets.index(r["target"])
+            s_idx = all_aa.index(r["source"])
+
+            sig_matrix[t_idx * 2, s_idx] = r["sig"]
+            sig_matrix[t_idx * 2 + 1, s_idx] = r["sig"]
+
+    # Annotation matrix
+    annot = np.empty_like(counts_matrix, dtype=object)
+    for i in range(counts_matrix.shape[0]):
+        for j in range(counts_matrix.shape[1]):
+            count = counts_matrix[i, j]
+            stars = sig_matrix[i, j]
+            annot[i, j] = f"{count}\n{stars}" if stars else f"{count}"
+
+    # Plot
+    fig, ax = plt.subplots(figsize=FIGSIZE_DOUBLE)
+    vmax = np.nanmax(np.abs(log2_enrichment))
+
+    sns.heatmap(
+        log2_enrichment,
+        xticklabels=all_aa, yticklabels=row_labels,
+        cmap="RdBu_r", center=0, vmin=-vmax, vmax=vmax,
+        annot=annot, fmt="", annot_kws={"size": 6},
+        cbar_kws={"label": "log₂(observed / uniform expected)", "shrink": 0.7},
+        linewidths=0.3, linecolor="white", ax=ax,
+    )
+
+    ax.set_xlabel("Source amino acid")
+    ax.set_ylabel("")
+    ax.set_title(f"RG-gain transitions ({dataset}, missense only; * = Bonferroni p<0.05)")
+
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "rg_gain_transitions", dataset=dataset)
+
+    print(f"\n── RG-gain transitions ({dataset}) ──")
+    print(f"  Total gain events: pos = {counts_matrix[::2].sum()}, "
+          f"neg = {counts_matrix[1::2].sum()}")
+    print(f"  Fisher tests performed: {n_tests}")
+
+    if len(p_df) > 0:
+        sig_hits = p_df
+        if len(sig_hits) > 0:
+            print(f"  Significant transitions (Bonferroni):")
+            print(sig_hits.to_string(index=False))
+        else:
+            print(f"  No transitions significant after Bonferroni correction.")
+
+    return {
+        "counts_matrix": counts_matrix,
+        "log2_enrichment": log2_enrichment,
+        "fisher_results": p_df,
+        "n_tests": n_tests,
+    }
