@@ -145,7 +145,7 @@ CONSEQUENCE_GROUPS = {
                         "splice_donor_variant", "splice_acceptor_variant",
                         "start_lost"},
     "inframe_indel":   {"inframe_insertion", "inframe_deletion"},
-    "stop_lost":       {"stop_lost"},
+    # "stop_lost":       {"stop_lost"},
     "other":           set(),   # fallback
 }
 
@@ -157,7 +157,7 @@ _TERM_TO_GROUP = {
 }
 
 CONSEQUENCE_ORDER = ["synonymous", "missense", "inframe_indel",
-                     "stop_lost", "LoF", "other"]
+                    "LoF", "other"]
 
 
 def collapse_consequence(consequence: str | None) -> str:
@@ -411,3 +411,4 @@ def plot_median_alphamissense(
     print(f"  Mann-Whitney p = {p:.2e} {sig}")
 
     return fig, results
+

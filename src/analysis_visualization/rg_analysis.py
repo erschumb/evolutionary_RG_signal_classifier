@@ -1474,3 +1474,1109 @@ def plot_rg_gain_transitions(
         "fisher_results": p_df,
         "n_tests": n_tests,
     }
+
+
+_CODON_TABLE = {
+    'TTT':'F','TTC':'F','TTA':'L','TTG':'L',
+    'CTT':'L','CTC':'L','CTA':'L','CTG':'L',
+    'ATT':'I','ATC':'I','ATA':'I','ATG':'M',
+    'GTT':'V','GTC':'V','GTA':'V','GTG':'V',
+    'TCT':'S','TCC':'S','TCA':'S','TCG':'S',
+    'CCT':'P','CCC':'P','CCA':'P','CCG':'P',
+    'ACT':'T','ACC':'T','ACA':'T','ACG':'T',
+    'GCT':'A','GCC':'A','GCA':'A','GCG':'A',
+    'TAT':'Y','TAC':'Y','TAA':'*','TAG':'*',
+    'CAT':'H','CAC':'H','CAA':'Q','CAG':'Q',
+    'AAT':'N','AAC':'N','AAA':'K','AAG':'K',
+    'GAT':'D','GAC':'D','GAA':'E','GAG':'E',
+    'TGT':'C','TGC':'C','TGA':'*','TGG':'W',
+    'CGT':'R','CGC':'R','CGA':'R','CGG':'R',
+    'AGT':'S','AGC':'S','AGA':'R','AGG':'R',
+    'GGT':'G','GGC':'G','GGA':'G','GGG':'G',
+}
+ 
+ 
+def _translate(dna: str) -> str:
+    """Translate DNA to protein (length must be a multiple of 3)."""
+    return "".join(
+        _CODON_TABLE.get(dna[i:i + 3].upper(), "X")
+        for i in range(0, len(dna) - 2, 3)
+    )
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Per-region enumeration of all possible single-nt substitutions
+# ════════════════════════════════════════════════════════════════════════════
+ 
+_NUCLEOTIDES = ["A", "C", "G", "T"]
+ 
+ 
+def enumerate_single_nt_substitutions(
+    dna: str,
+    protein: str,
+) -> pd.DataFrame:
+    """
+    For a given DNA sequence (coding, must be multiple of 3), enumerate every
+    possible single-nucleotide substitution. For each one, compute:
+ 
+      - consequence: 'synonymous', 'missense', 'nonsense', 'other'
+      - rg_event:    'no_change', 'loss', 'gain', 'movement'  (for missense only)
+      - aa_from, aa_to: for missense only
+ 
+    The frameshift and in-frame indel categories do not occur — we only
+    substitute single bases.
+ 
+    Returns one row per (dna_position × alternative_base) combination.
+    """
+    dna = dna.upper()
+    n = len(dna)
+ 
+    # Precompute RG positions in reference protein
+    ref_rg = _rg_positions(protein)
+ 
+    rows = []
+    for i in range(n):
+        ref_base = dna[i]
+        for alt_base in _NUCLEOTIDES:
+            if alt_base == ref_base:
+                continue
+            mutated_dna = dna[:i] + alt_base + dna[i + 1:]
+            mutated_protein = _translate(mutated_dna)
+ 
+            # Position in protein affected by this nt substitution
+            aa_pos = i // 3
+            if aa_pos >= len(protein) or aa_pos >= len(mutated_protein):
+                continue
+ 
+            ref_aa = protein[aa_pos]
+            alt_aa = mutated_protein[aa_pos]
+ 
+            # Consequence classification
+            if alt_aa == ref_aa:
+                cons = "synonymous"
+            elif alt_aa == "*":
+                cons = "nonsense"
+            elif ref_aa == "*":
+                cons = "stop_lost"
+            else:
+                cons = "missense"
+ 
+            # RG event (only meaningful for missense)
+            if cons == "missense":
+                alt_rg = _rg_positions(mutated_protein)
+                rg_event = _classify_rg_event(ref_rg, alt_rg)
+            else:
+                rg_event = None
+ 
+            rows.append({
+                "dna_pos": i,
+                "ref_base": ref_base,
+                "alt_base": alt_base,
+                "aa_pos": aa_pos,
+                "aa_from": ref_aa,
+                "aa_to": alt_aa,
+                "consequence": cons,
+                "rg_event": rg_event,
+            })
+ 
+    return pd.DataFrame(rows)
+ 
+ 
+def _rg_positions(seq: str) -> list[int]:
+    """R positions of RG motifs."""
+    return [i for i in range(len(seq) - 1) if seq[i] == "R" and seq[i + 1] == "G"]
+ 
+ 
+def _classify_rg_event(rg_before: list[int], rg_after: list[int]) -> str:
+    """Same classifier used for observed events — duplicated to keep modules independent."""
+    if rg_before == rg_after:
+        return "no_change"
+    if len(rg_after) > len(rg_before):
+        return "gain"
+    if len(rg_after) < len(rg_before):
+        return "loss"
+    return "movement"
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Build null distributions across regions
+# ════════════════════════════════════════════════════════════════════════════
+ 
+def build_enumeration_null(
+    region_by_id: dict,
+    df_observed: pd.DataFrame,
+) -> dict:
+    """
+    For each region, enumerate all possible single-nt substitutions and
+    aggregate into per-group null counts, weighted by the observed missense
+    count per region (so regions with more observed variants contribute more).
+ 
+    Returns a dict with:
+        rg_events_null      — DataFrame of expected counts per (group, rg_event)
+        consequences_null   — DataFrame of expected counts per (group, consequence)
+        per_region_enumerations — dict[region_id] -> enumeration DataFrame
+    """
+    # Observed missense count per region (used for weighting the null)
+    obs_missense_per_region = (
+        df_observed[
+            df_observed["Consequence"].fillna("").str.contains("missense_variant")
+        ]
+        .groupby("region_id")
+        .size()
+    )
+ 
+    # Observed total variants per region (for weighting the consequence null)
+    obs_total_per_region = df_observed.groupby("region_id").size()
+ 
+    rg_rows = []
+    cons_rows = []
+    per_region_enum = {}
+ 
+    for rid, region in region_by_id.items():
+        dna = region.get("dna")
+        protein = region.get("prot_seq")
+        group = region.get("group")
+        if not dna or not protein or len(dna) != 3 * len(protein):
+            continue
+ 
+        enum_df = enumerate_single_nt_substitutions(dna, protein)
+        per_region_enum[rid] = enum_df
+ 
+        # ── RG-event null: weighted by this region's observed missense count ──
+        missense_enum = enum_df[enum_df["consequence"] == "missense"]
+        n_possible_missense = len(missense_enum)
+        n_obs_missense = int(obs_missense_per_region.get(rid, 0))
+        if n_possible_missense > 0 and n_obs_missense > 0:
+            event_props = (
+                missense_enum["rg_event"].value_counts(normalize=True)
+            )
+            for event, prop in event_props.items():
+                rg_rows.append({
+                    "region_id": rid,
+                    "group": group,
+                    "rg_event": event,
+                    "expected_count": prop * n_obs_missense,
+                })
+ 
+        # ── Consequence null: weighted by this region's observed total ──
+        n_possible = len(enum_df)
+        n_obs_total = int(obs_total_per_region.get(rid, 0))
+        if n_possible > 0 and n_obs_total > 0:
+            cons_props = enum_df["consequence"].value_counts(normalize=True)
+            for cons, prop in cons_props.items():
+                cons_rows.append({
+                    "region_id": rid,
+                    "group": group,
+                    "consequence": cons,
+                    "expected_count": prop * n_obs_total,
+                })
+ 
+    rg_events_null = (
+        pd.DataFrame(rg_rows)
+          .groupby(["group", "rg_event"])["expected_count"]
+          .sum()
+          .reset_index()
+    )
+    consequences_null = (
+        pd.DataFrame(cons_rows)
+          .groupby(["group", "consequence"])["expected_count"]
+          .sum()
+          .reset_index()
+    )
+ 
+    return {
+        "rg_events_null": rg_events_null,
+        "consequences_null": consequences_null,
+        "per_region_enumerations": per_region_enum,
+    }
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Plot: observed vs expected RG-event distribution
+# ════════════════════════════════════════════════════════════════════════════
+ 
+RG_EVENT_TYPES_ORDERED = ["no_change", "loss", "gain", "movement"]
+ 
+_EVENT_COLORS = {
+    "no_change": "#C7C7C7",
+    "loss":      "#D55E00",
+    "gain":      "#009E73",
+    "movement":  "#56B4E9",
+}
+ 
+ 
+def plot_rg_events_observed_vs_expected(
+    df_events: pd.DataFrame,
+    null_results: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> dict:
+    """
+    Stacked-bar plot with FOUR bars: neg observed, neg expected, pos observed,
+    pos expected. Chi² goodness-of-fit test per group (observed vs expected).
+    """
+    df_events = df_events[df_events["rg_change_event"].notna()].copy()
+ 
+    # Observed counts
+    obs = pd.crosstab(df_events["group"], df_events["rg_change_event"])
+    for ev in RG_EVENT_TYPES_ORDERED:
+        if ev not in obs.columns:
+            obs[ev] = 0
+    obs = obs[RG_EVENT_TYPES_ORDERED]
+ 
+    # Expected counts
+    null_df = null_results["rg_events_null"]
+    exp = null_df.pivot(index="group", columns="rg_event", values="expected_count")
+    for ev in RG_EVENT_TYPES_ORDERED:
+        if ev not in exp.columns:
+            exp[ev] = 0
+    exp = exp.reindex(index=obs.index)[RG_EVENT_TYPES_ORDERED].fillna(0)
+ 
+    # Convert both to proportions
+    obs_prop = obs.div(obs.sum(axis=1), axis=0)
+    exp_prop = exp.div(exp.sum(axis=1), axis=0)
+ 
+    # χ² goodness-of-fit per group (observed vs expected)
+    group_stats = {}
+    for group in obs.index:
+        obs_counts = obs.loc[group].values.astype(float)
+        exp_counts = exp.loc[group].values.astype(float)
+        # Normalize expected to match observed total
+        exp_scaled = exp_counts * (obs_counts.sum() / exp_counts.sum())
+        # Drop cells where expected == 0 to avoid divide-by-zero in chisquare
+        mask = exp_scaled > 0
+        chi2, p = stats.chisquare(obs_counts[mask], f_exp=exp_scaled[mask])
+        group_stats[group] = {
+            "chi2": float(chi2),
+            "p": float(p),
+            "sig": significance_stars(p),
+            "dof": int(mask.sum() - 1),
+        }
+ 
+    # ── Plot: 4 bars ───────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(FIGSIZE_SINGLE[0] + 1.0, FIGSIZE_SINGLE[1] + 0.3))
+ 
+    groups = list(obs.index)  # ['neg', 'pos']
+    bar_labels = []
+    bar_data = []
+    for group in groups:
+        bar_labels.append(f"{group}\nobserved")
+        bar_data.append(obs_prop.loc[group].values)
+        bar_labels.append(f"{group}\nexpected")
+        bar_data.append(exp_prop.loc[group].values)
+ 
+    x = np.arange(len(bar_labels))
+    bottoms = np.zeros(len(bar_labels))
+ 
+    for i, event in enumerate(RG_EVENT_TYPES_ORDERED):
+        vals = np.array([row[i] for row in bar_data])
+        ax.bar(
+            x, vals, bottom=bottoms,
+            color=_EVENT_COLORS[event], edgecolor="black",
+            linewidth=0.4, width=0.7, label=event,
+        )
+        for j, (val, bot) in enumerate(zip(vals, bottoms)):
+            if val > 0.03:
+                ax.text(
+                    x[j], bot + val / 2, f"{val * 100:.1f}%",
+                    ha="center", va="center", fontsize=6,
+                    color="black" if event == "no_change" else "white",
+                )
+        bottoms += vals
+ 
+    ax.set_xticks(x)
+    ax.set_xticklabels(bar_labels, fontsize=7)
+    ax.set_ylim(0, 1.15)
+    ax.set_ylabel("Fraction of missense variants")
+    ax.set_xlabel("")
+    ax.set_title("RG change events: observed vs expected (enumeration null)")
+ 
+    # n above each observed bar
+    for idx, group in enumerate(groups):
+        n_obs = int(obs.loc[group].sum())
+        ax.text(idx * 2, 1.02, f"n = {n_obs:,}",
+                ha="center", va="bottom", fontsize=6.5)
+ 
+    # Annotations for χ² per group (positioned above the pair of bars)
+    for idx, group in enumerate(groups):
+        s = group_stats[group]
+        x_center = idx * 2 + 0.5
+        ax.text(
+            x_center, 1.08,
+            f"χ² p = {s['p']:.2e} {s['sig']}",
+            ha="center", va="bottom", fontsize=6.5,
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray",
+                      pad=2, linewidth=0.4),
+        )
+ 
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0),
+              frameon=False, title="Event")
+ 
+    sns.despine()
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "rg_events_observed_vs_expected", dataset=dataset)
+ 
+    print(f"\n── RG change events: observed vs expected ({dataset}) ──")
+    print("\nObserved proportions:")
+    print(obs_prop.round(4))
+    print("\nExpected proportions (enumeration null):")
+    print(exp_prop.round(4))
+    print("\nχ² goodness-of-fit per group (observed vs expected):")
+    for g, s in group_stats.items():
+        print(f"  {g}: χ² = {s['chi2']:.2f}, df = {s['dof']}, "
+              f"p = {s['p']:.2e} {s['sig']}")
+ 
+    return {
+        "observed": obs,
+        "expected": exp,
+        "observed_prop": obs_prop,
+        "expected_prop": exp_prop,
+        "group_stats": group_stats,
+    }
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Plot: observed vs expected consequence distribution
+# ════════════════════════════════════════════════════════════════════════════
+ 
+def plot_consequences_observed_vs_expected(
+    df_observed: pd.DataFrame,
+    null_results: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+    consequence_order: list[str] = None,
+) -> dict:
+    """
+    Same logic as plot_rg_events_observed_vs_expected, but for the consequence
+    distribution. The enumeration null only knows these categories:
+    synonymous, missense, nonsense, stop_lost.
+ 
+    Observed uses your existing collapse_consequence mapping; we restrict to
+    categories the null can produce. LoF (frameshift/splice) and inframe_indel
+    cannot arise from single-nt substitutions and are excluded from this
+    comparison.
+    """
+    from src.analysis_visualization.region_analysis import collapse_consequence
+ 
+    # Observed side
+    df = df_observed.copy()
+    df["consequence_class"] = df["Consequence"].apply(collapse_consequence)
+ 
+    # Keep only categories the null could generate
+    # collapse_consequence maps nonsense/stop_lost into "LoF" — so we
+    # need a finer version here: keep missense, synonymous separately
+    # and call the rest "nonsense" (includes stop_gained and stop_lost).
+    def _refine(row):
+        cons = str(row["Consequence"]) if pd.notna(row["Consequence"]) else ""
+        if "synonymous_variant" in cons: return "synonymous"
+        if "missense_variant" in cons:   return "missense"
+        if "stop_gained" in cons:        return "nonsense"
+        if "stop_lost" in cons:          return "stop_lost"
+        return "other"
+    df["cons_refined"] = df.apply(_refine, axis=1)
+    df = df[df["cons_refined"].isin(["synonymous", "missense", "nonsense", "stop_lost"])]
+ 
+    cons_order = consequence_order or ["synonymous", "missense", "nonsense", "stop_lost"]
+ 
+    obs = pd.crosstab(df["group"], df["cons_refined"])
+    for c in cons_order:
+        if c not in obs.columns:
+            obs[c] = 0
+    obs = obs[cons_order]
+ 
+    null_df = null_results["consequences_null"]
+    exp = null_df.pivot(index="group", columns="consequence", values="expected_count")
+    for c in cons_order:
+        if c not in exp.columns:
+            exp[c] = 0
+    exp = exp.reindex(index=obs.index)[cons_order].fillna(0)
+ 
+    obs_prop = obs.div(obs.sum(axis=1), axis=0)
+    exp_prop = exp.div(exp.sum(axis=1), axis=0)
+ 
+    # Per-group χ² goodness-of-fit
+    group_stats = {}
+    for group in obs.index:
+        obs_counts = obs.loc[group].values.astype(float)
+        exp_counts = exp.loc[group].values.astype(float)
+        exp_scaled = exp_counts * (obs_counts.sum() / exp_counts.sum())
+        mask = exp_scaled > 0
+        chi2, p = stats.chisquare(obs_counts[mask], f_exp=exp_scaled[mask])
+        group_stats[group] = {
+            "chi2": float(chi2), "p": float(p),
+            "sig": significance_stars(p),
+            "dof": int(mask.sum() - 1),
+        }
+ 
+    # ── Plot ───────────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(FIGSIZE_SINGLE[0] + 1.0, FIGSIZE_SINGLE[1] + 0.3))
+ 
+    cons_colors = {
+        "synonymous": "#C7C7C7",
+        "missense":   "#E69F00",
+        "nonsense":   "#D55E00",
+        "stop_lost":  "#56B4E9",
+    }
+ 
+    groups = list(obs.index)
+    bar_labels = []
+    bar_data = []
+    for group in groups:
+        bar_labels.append(f"{group}\nobserved")
+        bar_data.append(obs_prop.loc[group].values)
+        bar_labels.append(f"{group}\nexpected")
+        bar_data.append(exp_prop.loc[group].values)
+ 
+    x = np.arange(len(bar_labels))
+    bottoms = np.zeros(len(bar_labels))
+ 
+    for i, cons in enumerate(cons_order):
+        vals = np.array([row[i] for row in bar_data])
+        ax.bar(
+            x, vals, bottom=bottoms,
+            color=cons_colors.get(cons, "#888"), edgecolor="black",
+            linewidth=0.4, width=0.7, label=cons,
+        )
+        for j, (val, bot) in enumerate(zip(vals, bottoms)):
+            if val > 0.03:
+                ax.text(
+                    x[j], bot + val / 2, f"{val * 100:.1f}%",
+                    ha="center", va="center", fontsize=6,
+                    color="white" if cons in ("nonsense", "missense") else "black",
+                )
+        bottoms += vals
+ 
+    ax.set_xticks(x)
+    ax.set_xticklabels(bar_labels, fontsize=7)
+    ax.set_ylim(0, 1.15)
+    ax.set_ylabel("Fraction")
+    ax.set_title("Consequences: observed vs expected (single-nt substitution null)")
+ 
+    for idx, group in enumerate(groups):
+        n_obs = int(obs.loc[group].sum())
+        ax.text(idx * 2, 1.02, f"n = {n_obs:,}",
+                ha="center", va="bottom", fontsize=6.5)
+ 
+    for idx, group in enumerate(groups):
+        s = group_stats[group]
+        x_center = idx * 2 + 0.5
+        ax.text(
+            x_center, 1.08,
+            f"χ² p = {s['p']:.2e} {s['sig']}",
+            ha="center", va="bottom", fontsize=6.5,
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray",
+                      pad=2, linewidth=0.4),
+        )
+ 
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0),
+              frameon=False, title="Consequence")
+ 
+    sns.despine()
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "consequences_observed_vs_expected", dataset=dataset)
+ 
+    print(f"\n── Consequences: observed vs expected ({dataset}) ──")
+    print("\nObserved proportions:")
+    print(obs_prop.round(4))
+    print("\nExpected proportions (enumeration null):")
+    print(exp_prop.round(4))
+    print("\nχ² goodness-of-fit per group:")
+    for g, s in group_stats.items():
+        print(f"  {g}: χ² = {s['chi2']:.2f}, df = {s['dof']}, "
+              f"p = {s['p']:.2e} {s['sig']}")
+ 
+    return {
+        "observed": obs,
+        "expected": exp,
+        "observed_prop": obs_prop,
+        "expected_prop": exp_prop,
+        "group_stats": group_stats,
+    }
+ 
+
+ 
+GROUP_COLORS_PALE = {"pos": "#B8DFAA", "neg": "#E5BEBE"}
+ 
+ 
+def _box_colors_ordered():
+    """Returns the 4 colors in the order: neg_obs, neg_exp, pos_obs, pos_exp."""
+    return [
+        GROUP_COLORS["neg"],        # neg observed (saturated)
+        GROUP_COLORS_PALE["neg"],   # neg expected (pale)
+        GROUP_COLORS["pos"],        # pos observed (saturated)
+        GROUP_COLORS_PALE["pos"],   # pos expected (pale)
+    ]
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Per-region proportion builders
+# ════════════════════════════════════════════════════════════════════════════
+ 
+def _per_region_rg_event_proportions(
+    df_events: pd.DataFrame,
+    null_results: dict,
+) -> pd.DataFrame:
+    """
+    For each region, compute observed and expected proportion of each RG event
+    category. Returns a long-form dataframe suitable for seaborn boxplots with:
+        region_id, group, rg_event, source ('observed'/'expected'), proportion
+    """
+    df_events = df_events[df_events["rg_change_event"].notna()].copy()
+ 
+    # Observed proportions per region
+    obs_counts = (
+        df_events.groupby(["region_id", "group", "rg_change_event"])
+                 .size()
+                 .reset_index(name="count")
+    )
+    totals = (
+        obs_counts.groupby(["region_id", "group"])["count"]
+                  .sum().reset_index(name="total")
+    )
+    obs = obs_counts.merge(totals, on=["region_id", "group"])
+    obs["proportion"] = obs["count"] / obs["total"]
+    obs = obs[["region_id", "group", "rg_change_event", "proportion"]].rename(
+        columns={"rg_change_event": "rg_event"}
+    )
+    obs["source"] = "observed"
+ 
+    # Expected proportions per region (from enumeration)
+    per_region_enum = null_results["per_region_enumerations"]
+    region_groups = {rid: null_results["rg_events_null"]
+                     .set_index(["group"]).index for rid in per_region_enum}
+ 
+    exp_rows = []
+    # Need to know each region's group — rebuild from df_events for safety
+    group_lookup = (
+        df_events[["region_id", "group"]].drop_duplicates()
+        .set_index("region_id")["group"].to_dict()
+    )
+    for rid, enum_df in per_region_enum.items():
+        group = group_lookup.get(rid)
+        if group is None:
+            continue
+        missense_enum = enum_df[enum_df["consequence"] == "missense"]
+        if len(missense_enum) == 0:
+            continue
+        props = missense_enum["rg_event"].value_counts(normalize=True)
+        for event, prop in props.items():
+            exp_rows.append({
+                "region_id": rid, "group": group,
+                "rg_event": event, "proportion": prop,
+            })
+    exp = pd.DataFrame(exp_rows)
+    exp["source"] = "expected"
+ 
+    return pd.concat([obs, exp], ignore_index=True)
+ 
+ 
+def _per_region_consequence_proportions(
+    df_observed: pd.DataFrame,
+    null_results: dict,
+    categories: list[str],
+) -> pd.DataFrame:
+    """
+    Analog to the RG event version, but for consequence classes.
+    `categories` is the list of consequence classes to compare
+    (must be producible by single-nt substitution).
+    """
+    df = df_observed.copy()
+ 
+    # Refine consequence into the null-comparable categories
+    def _refine(cons):
+        if not isinstance(cons, str):
+            return "other"
+        for term in cons.split("&"):
+            if term == "synonymous_variant": return "synonymous"
+            if term == "missense_variant":   return "missense"
+            if term == "stop_gained":        return "nonsense"
+        return "other"
+ 
+    df["cons_refined"] = df["Consequence"].apply(_refine)
+    df = df[df["cons_refined"].isin(categories)]
+ 
+    obs_counts = (
+        df.groupby(["region_id", "group", "cons_refined"])
+          .size().reset_index(name="count")
+    )
+    totals = (
+        obs_counts.groupby(["region_id", "group"])["count"]
+                  .sum().reset_index(name="total")
+    )
+    obs = obs_counts.merge(totals, on=["region_id", "group"])
+    obs["proportion"] = obs["count"] / obs["total"]
+    obs = obs[["region_id", "group", "cons_refined", "proportion"]].rename(
+        columns={"cons_refined": "consequence"}
+    )
+    obs["source"] = "observed"
+ 
+    # Expected per region from enumeration
+    per_region_enum = null_results["per_region_enumerations"]
+    group_lookup = (
+        df_observed[["region_id", "group"]].drop_duplicates()
+        .set_index("region_id")["group"].to_dict()
+    )
+ 
+    exp_rows = []
+    for rid, enum_df in per_region_enum.items():
+        group = group_lookup.get(rid)
+        if group is None:
+            continue
+        # Restrict enumeration to the same categories
+        enum_sub = enum_df[enum_df["consequence"].isin(categories)]
+        if len(enum_sub) == 0:
+            continue
+        props = enum_sub["consequence"].value_counts(normalize=True)
+        for cons, prop in props.items():
+            exp_rows.append({
+                "region_id": rid, "group": group,
+                "consequence": cons, "proportion": prop,
+            })
+    exp = pd.DataFrame(exp_rows)
+    exp["source"] = "expected"
+ 
+    return pd.concat([obs, exp], ignore_index=True)
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Shared plotting helper: 4-box panel (neg_obs, neg_exp, pos_obs, pos_exp)
+# ════════════════════════════════════════════════════════════════════════════
+ 
+def _four_box_panel(ax, data, y_col, title):
+    """
+    Draw the 4-box comparison on `ax`:
+        neg observed, neg expected, pos observed, pos expected.
+ 
+    `data` is a long-form df with columns ['group', 'source', <y_col>].
+    Returns (p_neg_obs_vs_exp, p_pos_obs_vs_exp, p_pos_vs_neg_observed).
+    """
+    # Build an ordered categorical "box" column
+    def _label(row):
+        return f"{row['group']}\n{row['source']}"
+    data = data.copy()
+    data["box"] = data.apply(_label, axis=1)
+ 
+    box_order = [
+        "neg\nobserved", "neg\nexpected", "pos\nobserved", "pos\nexpected"
+    ]
+    colors = _box_colors_ordered()
+ 
+    sns.boxplot(
+        data=data, x="box", y=y_col, order=box_order,
+        palette=colors, width=0.55, fliersize=0,
+        linewidth=0.6, ax=ax,
+        showmeans=True,
+        meanprops={"marker": "D", "markerfacecolor": "white",
+                   "markeredgecolor": "black", "markersize": 3.5},
+    )
+    sns.stripplot(
+        data=data, x="box", y=y_col, order=box_order,
+        color="black", size=1.0, alpha=0.3, jitter=0.15, ax=ax,
+    )
+ 
+    # Statistical tests
+    def _pair(g_a, s_a, g_b, s_b):
+        a = data[(data["group"] == g_a) & (data["source"] == s_a)][y_col].dropna()
+        b = data[(data["group"] == g_b) & (data["source"] == s_b)][y_col].dropna()
+        if len(a) < 3 or len(b) < 3:
+            return (np.nan, "n.s.")
+        _, p = stats.mannwhitneyu(a, b, alternative="two-sided")
+        return (float(p), significance_stars(p))
+ 
+    p_neg_dev, sig_neg_dev = _pair("neg", "observed", "neg", "expected")
+    p_pos_dev, sig_pos_dev = _pair("pos", "observed", "pos", "expected")
+    p_between,  sig_between = _pair("pos", "observed", "neg", "observed")
+ 
+    # Significance annotations
+    ymax = data[y_col].quantile(0.98)
+    if pd.isna(ymax) or ymax <= 0:
+        ymax = 1.0
+    # Bracket: neg_obs (0) vs neg_exp (1)
+    ax.plot([0, 1], [ymax * 1.05, ymax * 1.05], color="black", lw=0.5)
+    ax.text(0.5, ymax * 1.07, sig_neg_dev, ha="center", va="bottom", fontsize=7)
+    # Bracket: pos_obs (2) vs pos_exp (3)
+    ax.plot([2, 3], [ymax * 1.05, ymax * 1.05], color="black", lw=0.5)
+    ax.text(2.5, ymax * 1.07, sig_pos_dev, ha="center", va="bottom", fontsize=7)
+    # Bracket: neg_obs (0) vs pos_obs (2) — above the inner brackets
+    ax.plot([0, 2], [ymax * 1.18, ymax * 1.18], color="black", lw=0.5)
+    ax.text(1.0, ymax * 1.20, sig_between, ha="center", va="bottom", fontsize=7)
+ 
+    ax.set_ylim(0, ymax * 1.30)
+    ax.set_title(title)
+    ax.set_xlabel("")
+    ax.tick_params(axis="x", labelsize=6.5)
+ 
+    return {
+        "p_neg_observed_vs_expected": p_neg_dev,
+        "p_pos_observed_vs_expected": p_pos_dev,
+        "p_pos_vs_neg_observed":      p_between,
+    }
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Plot 1: RG events observed vs expected, one subplot per event
+# ════════════════════════════════════════════════════════════════════════════
+ 
+RG_EVENT_TYPES_ORDERED = ["no_change", "loss", "gain", "movement"]
+ 
+ 
+def plot_rg_events_vs_expected_boxes(
+    df_events: pd.DataFrame,
+    null_results: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> dict:
+    """
+    Four subplots (one per event), each showing 4 boxes:
+    neg observed, neg expected, pos observed, pos expected.
+    """
+    long_df = _per_region_rg_event_proportions(df_events, null_results)
+ 
+    fig, axes = plt.subplots(
+        1, 4,
+        figsize=(FIGSIZE_DOUBLE[0] * 1.1, FIGSIZE_SINGLE[1] + 0.5),
+        sharey=False,
+    )
+ 
+    results = {}
+    for ax, event in zip(axes, RG_EVENT_TYPES_ORDERED):
+        sub = long_df[long_df["rg_event"] == event]
+        if len(sub) == 0:
+            ax.set_visible(False)
+            continue
+        stats_dict = _four_box_panel(ax, sub, "proportion", event)
+        results[event] = stats_dict
+        if ax is axes[0]:
+            ax.set_ylabel("Per-region proportion")
+        else:
+            ax.set_ylabel("")
+ 
+    fig.suptitle(f"RG change events: observed vs expected ({dataset})", y=1.02)
+    sns.despine(fig=fig)
+    plt.tight_layout()
+ 
+    if save:
+        save_figure(fig, "rg_events_vs_expected_boxes", dataset=dataset)
+ 
+    print(f"\n── RG change events: observed vs expected ({dataset}) ──")
+    for event, s in results.items():
+        print(f"  {event}:")
+        print(f"    neg observed vs expected: p = {s['p_neg_observed_vs_expected']:.2e}")
+        print(f"    pos observed vs expected: p = {s['p_pos_observed_vs_expected']:.2e}")
+        print(f"    pos vs neg (observed):    p = {s['p_pos_vs_neg_observed']:.2e}")
+    return results
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Plot 2: Consequence distribution observed vs expected, per-region box plots
+# ════════════════════════════════════════════════════════════════════════════
+ 
+def plot_consequences_vs_expected_boxes(
+    df_observed: pd.DataFrame,
+    null_results: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> dict:
+    """
+    Three subplots (synonymous, missense, nonsense), each showing 4 boxes
+    (neg_obs, neg_exp, pos_obs, pos_exp). Categories restricted to those
+    that can arise from single-nt substitutions.
+    """
+    categories = ["synonymous", "missense", "nonsense"]
+    long_df = _per_region_consequence_proportions(
+        df_observed, null_results, categories=categories
+    )
+ 
+    fig, axes = plt.subplots(
+        1, len(categories),
+        figsize=(FIGSIZE_DOUBLE[0], FIGSIZE_SINGLE[1] + 0.5),
+        sharey=False,
+    )
+ 
+    results = {}
+    for ax, cons in zip(axes, categories):
+        sub = long_df[long_df["consequence"] == cons]
+        if len(sub) == 0:
+            ax.set_visible(False)
+            continue
+        stats_dict = _four_box_panel(ax, sub, "proportion", cons)
+        results[cons] = stats_dict
+        if ax is axes[0]:
+            ax.set_ylabel("Per-region proportion")
+        else:
+            ax.set_ylabel("")
+ 
+    fig.suptitle(
+        f"Consequence distribution: observed vs expected ({dataset})",
+        y=1.02,
+    )
+    sns.despine(fig=fig)
+    plt.tight_layout()
+ 
+    if save:
+        save_figure(fig, "consequences_vs_expected_boxes", dataset=dataset)
+ 
+    print(f"\n── Consequences: observed vs expected ({dataset}) ──")
+    for cons, s in results.items():
+        print(f"  {cons}:")
+        print(f"    neg observed vs expected: p = {s['p_neg_observed_vs_expected']:.2e}")
+        print(f"    pos observed vs expected: p = {s['p_pos_observed_vs_expected']:.2e}")
+        print(f"    pos vs neg (observed):    p = {s['p_pos_vs_neg_observed']:.2e}")
+ 
+    return results
+ 
+
+  
+def _rg_ratio(seq: str) -> float:
+    """Return n_R / n_G for a sequence. NaN if no G residues."""
+    if not isinstance(seq, str) or len(seq) == 0:
+        return np.nan
+    n_r = seq.count("R")
+    n_g = seq.count("G")
+    if n_g == 0:
+        return np.nan
+    return n_r / n_g
+ 
+ 
+def compute_delta_rg_ratio(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+) -> pd.DataFrame:
+    """
+    For every missense variant, compute the R/G ratio before and after the
+    substitution and the relative delta.
+ 
+    Adds columns: wt_rg_ratio, mut_rg_ratio, delta_rg_ratio_rel
+    Returns a new dataframe (missense-only) with these columns appended.
+    """
+    df = df_rg[
+        df_rg["Consequence"].fillna("").str.contains("missense_variant")
+    ].copy()
+ 
+    wt_ratios = []
+    mut_ratios = []
+    rel_deltas = []
+    affects_rg = []
+ 
+    for row in df.itertuples(index=False):
+        region = region_by_id.get(row.region_id)
+        if region is None or pd.isna(row.protein_position_int) or row.after_aa is None:
+            wt_ratios.append(np.nan)
+            mut_ratios.append(np.nan)
+            rel_deltas.append(np.nan)
+            affects_rg.append(False)
+            continue
+ 
+        seq_wt = region["prot_seq"]
+        pos = int(row.protein_position_int) - int(row.region_start_aa)
+        if pos < 0 or pos >= len(seq_wt):
+            wt_ratios.append(np.nan)
+            mut_ratios.append(np.nan)
+            rel_deltas.append(np.nan)
+            affects_rg.append(False)
+            continue
+ 
+        seq_mut = seq_wt[:pos] + row.after_aa + seq_wt[pos + 1:]
+        wt_ratio = _rg_ratio(seq_wt)
+        mut_ratio = _rg_ratio(seq_mut)
+        if pd.notna(wt_ratio) and wt_ratio != 0:
+            rel_delta = (mut_ratio - wt_ratio) / wt_ratio
+        else:
+            rel_delta = np.nan
+ 
+        wt_ratios.append(wt_ratio)
+        mut_ratios.append(mut_ratio)
+        rel_deltas.append(rel_delta)
+        # R/G-affecting = before or after is R or G
+        affects_rg.append(
+            (row.before_aa in ("R", "G")) or (row.after_aa in ("R", "G"))
+        )
+ 
+    df["wt_rg_ratio"] = wt_ratios
+    df["mut_rg_ratio"] = mut_ratios
+    df["delta_rg_ratio_rel"] = rel_deltas
+    df["affects_rg_residue"] = affects_rg
+    return df
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Plot A: per-variant distribution, filtered to R/G-affecting missense
+# ════════════════════════════════════════════════════════════════════════════
+ 
+def plot_delta_rg_ratio_per_variant(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> tuple[plt.Figure, dict]:
+    """
+    [Dataset-agnostic]
+    Box plot of relative delta RG ratio, restricted to missense variants that
+    touch an R or G (before_aa ∈ {R,G} or after_aa ∈ {R,G}).
+    One data point per variant; compared between pos and neg.
+    """
+    df = compute_delta_rg_ratio(df_rg, region_by_id)
+    df = df[df["affects_rg_residue"] & df["delta_rg_ratio_rel"].notna()]
+ 
+    pos_vals = df.loc[df["group"] == "pos", "delta_rg_ratio_rel"]
+    neg_vals = df.loc[df["group"] == "neg", "delta_rg_ratio_rel"]
+    _, p = stats.mannwhitneyu(pos_vals, neg_vals, alternative="two-sided")
+    sig = significance_stars(p)
+ 
+    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
+    sns.boxplot(
+        data=df, x="group", y="delta_rg_ratio_rel",
+        order=["neg", "pos"],
+        palette=[GROUP_COLORS["neg"], GROUP_COLORS["pos"]],
+        width=0.5, fliersize=0, linewidth=0.6, ax=ax,
+        showmeans=True,
+        meanprops={"marker": "D", "markerfacecolor": "white",
+                   "markeredgecolor": "black", "markersize": 4},
+    )
+    sns.stripplot(
+        data=df, x="group", y="delta_rg_ratio_rel",
+        order=["neg", "pos"], color="black", size=1.0, alpha=0.25,
+        jitter=0.2, ax=ax,
+    )
+ 
+    ax.axhline(0, color="gray", linestyle="--", linewidth=0.6, alpha=0.6)
+ 
+    ymax = df["delta_rg_ratio_rel"].abs().quantile(0.98)
+    y_bar = ymax * 1.1
+    ax.plot([0, 1], [y_bar, y_bar], color="black", lw=0.6)
+    ax.text(0.5, y_bar * 1.05, sig, ha="center", va="bottom", fontsize=8)
+    ax.set_ylim(-ymax * 1.3, ymax * 1.3)
+ 
+    ax.set_title("Relative Δ RG ratio per variant\n(R/G-affecting missense only)")
+    ax.set_ylabel("(mutant_ratio − WT_ratio) / WT_ratio")
+    ax.set_xlabel("")
+ 
+    stats_text = (
+        f"p = {p:.1e} {sig}\n"
+        f"n_pos = {len(pos_vals):,}\n"
+        f"n_neg = {len(neg_vals):,}"
+    )
+    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+            fontsize=6.5, va="top", ha="left",
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
+ 
+    sns.despine()
+    plt.tight_layout()
+ 
+    if save:
+        save_figure(fig, "delta_rg_ratio_per_variant", dataset=dataset)
+ 
+    results = {
+        "p": float(p), "sig": sig,
+        "median_pos": float(pos_vals.median()),
+        "median_neg": float(neg_vals.median()),
+        "mean_pos": float(pos_vals.mean()),
+        "mean_neg": float(neg_vals.mean()),
+        "n_pos": int(len(pos_vals)),
+        "n_neg": int(len(neg_vals)),
+    }
+ 
+    print(f"\n── Δ RG ratio per variant (R/G-affecting missense) [{dataset}] ──")
+    print(f"  pos: median = {results['median_pos']:+.4f}, "
+          f"mean = {results['mean_pos']:+.4f}, n = {results['n_pos']:,}")
+    print(f"  neg: median = {results['median_neg']:+.4f}, "
+          f"mean = {results['mean_neg']:+.4f}, n = {results['n_neg']:,}")
+    print(f"  Mann-Whitney p = {p:.2e} {sig}")
+ 
+    return fig, results
+ 
+ 
+# ════════════════════════════════════════════════════════════════════════════
+# Plot B: per-region mean delta across ALL missense variants
+# ════════════════════════════════════════════════════════════════════════════
+ 
+def plot_delta_rg_ratio_per_region(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> tuple[plt.Figure, dict]:
+    """
+    [Dataset-agnostic]
+    Box plot of per-region mean relative delta RG ratio, across ALL missense
+    variants in the region. One data point per region; compared between pos
+    and neg.
+    """
+    df = compute_delta_rg_ratio(df_rg, region_by_id)
+    df = df[df["delta_rg_ratio_rel"].notna()]
+ 
+    per_region = (
+        df.groupby(["region_id", "group"])["delta_rg_ratio_rel"]
+          .mean()
+          .reset_index(name="mean_delta_rg_ratio_rel")
+    )
+ 
+    pos_vals = per_region.loc[per_region["group"] == "pos", "mean_delta_rg_ratio_rel"]
+    neg_vals = per_region.loc[per_region["group"] == "neg", "mean_delta_rg_ratio_rel"]
+    _, p = stats.mannwhitneyu(pos_vals, neg_vals, alternative="two-sided")
+    sig = significance_stars(p)
+ 
+    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
+    sns.boxplot(
+        data=per_region, x="group", y="mean_delta_rg_ratio_rel",
+        order=["neg", "pos"],
+        palette=[GROUP_COLORS["neg"], GROUP_COLORS["pos"]],
+        width=0.5, fliersize=0, linewidth=0.6, ax=ax,
+        showmeans=True,
+        meanprops={"marker": "D", "markerfacecolor": "white",
+                   "markeredgecolor": "black", "markersize": 4},
+    )
+    sns.stripplot(
+        data=per_region, x="group", y="mean_delta_rg_ratio_rel",
+        order=["neg", "pos"], color="black", size=1.5, alpha=0.4,
+        jitter=0.15, ax=ax,
+    )
+ 
+    ax.axhline(0, color="gray", linestyle="--", linewidth=0.6, alpha=0.6)
+ 
+    ymax = per_region["mean_delta_rg_ratio_rel"].abs().quantile(0.98)
+    y_bar = ymax * 1.1
+    ax.plot([0, 1], [y_bar, y_bar], color="black", lw=0.6)
+    ax.text(0.5, y_bar * 1.05, sig, ha="center", va="bottom", fontsize=8)
+    ax.set_ylim(-ymax * 1.3, ymax * 1.3)
+ 
+    ax.set_title("Mean relative Δ RG ratio per region\n(all missense)")
+    ax.set_ylabel("Mean (mutant_ratio − WT_ratio) / WT_ratio")
+    ax.set_xlabel("")
+ 
+    stats_text = (
+        f"p = {p:.1e} {sig}\n"
+        f"n_pos = {len(pos_vals)}\n"
+        f"n_neg = {len(neg_vals)}"
+    )
+    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+            fontsize=6.5, va="top", ha="left",
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
+ 
+    sns.despine()
+    plt.tight_layout()
+ 
+    if save:
+        save_figure(fig, "delta_rg_ratio_per_region", dataset=dataset)
+ 
+    results = {
+        "p": float(p), "sig": sig,
+        "median_pos": float(pos_vals.median()),
+        "median_neg": float(neg_vals.median()),
+        "mean_pos": float(pos_vals.mean()),
+        "mean_neg": float(neg_vals.mean()),
+        "n_pos": int(len(pos_vals)),
+        "n_neg": int(len(neg_vals)),
+    }
+ 
+    print(f"\n── Per-region mean Δ RG ratio (all missense) [{dataset}] ──")
+    print(f"  pos: median = {results['median_pos']:+.4f}, "
+          f"mean = {results['mean_pos']:+.4f}, n = {results['n_pos']}")
+    print(f"  neg: median = {results['median_neg']:+.4f}, "
+          f"mean = {results['mean_neg']:+.4f}, n = {results['n_neg']}")
+    print(f"  Mann-Whitney p = {p:.2e} {sig}")
+ 
+    return fig, results
+ 
