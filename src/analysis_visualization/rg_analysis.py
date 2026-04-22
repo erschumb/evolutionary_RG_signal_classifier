@@ -1031,7 +1031,9 @@ def plot_rg_loss_transitions(
     counts_matrix = np.vstack(counts_rows).astype(int)
     enrichment_matrix = np.vstack(enrichment_rows)
     with np.errstate(divide="ignore", invalid="ignore"):
-        log2_enrichment = np.log2(enrichment_matrix)
+        # log2_enrichment = np.log2(enrichment_matrix)
+        pseudo = 1e-6
+        log2_enrichment = np.log2(enrichment_matrix + pseudo)
  
     # Per-cell Fisher's exact pos-vs-neg for each (source, target)
     sig_matrix = np.full_like(counts_matrix, "", dtype=object)
@@ -1341,7 +1343,7 @@ def plot_rg_gain_transitions(
             ]
 
             counts = group_sub["before_aa"].value_counts().reindex(all_aa, fill_value=0)
-            # print(counts)
+            print(counts)
             counts_rows.append(counts.values)
 
             # Enrichment vs uniform expectation over 19 non-target residues
@@ -1349,19 +1351,23 @@ def plot_rg_gain_transitions(
             print(non_target_total)
             expected = non_target_total / 19 if non_target_total > 0 else 0
             print(expected)
+
             enrichment = np.where(
                 expected > 0,
                 counts.values / expected,
                 np.nan,
             )
+            print(enrichment)
+            print("____")
             enrichment_rows.append(enrichment)
     # print(enrichment_rows)
     counts_matrix = np.vstack(counts_rows).astype(int)
     enrichment_matrix = np.vstack(enrichment_rows)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        log2_enrichment = np.log2(enrichment_matrix)
-
+        pseudo = 1e-6
+        log2_enrichment = np.log2(enrichment_matrix + pseudo)
+    print(log2_enrichment)
     # Per-cell Fisher's exact (pos vs neg) for each (source → target)
     sig_matrix = np.full_like(counts_matrix, "", dtype=object)
     p_records = []
