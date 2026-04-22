@@ -1031,9 +1031,10 @@ def plot_rg_loss_transitions(
     counts_matrix = np.vstack(counts_rows).astype(int)
     enrichment_matrix = np.vstack(enrichment_rows)
     with np.errstate(divide="ignore", invalid="ignore"):
-        # log2_enrichment = np.log2(enrichment_matrix)
-        pseudo = 1e-6
-        log2_enrichment = np.log2(enrichment_matrix + pseudo)
+        # pseudo = 1e-6
+        # log2_enrichment = np.log2(enrichment_matrix + pseudo)
+        log2_enrichment = np.log2(enrichment_matrix)
+        log2_enrichment = np.nan_to_num(log2_enrichment, neginf=np.nan)
  
     # Per-cell Fisher's exact pos-vs-neg for each (source, target)
     sig_matrix = np.full_like(counts_matrix, "", dtype=object)
@@ -1088,7 +1089,7 @@ def plot_rg_loss_transitions(
     # Plot
     fig, ax = plt.subplots(figsize=FIGSIZE_DOUBLE)
     vmax = np.nanmax(np.abs(log2_enrichment))
-    
+    mask = np.isnan(log2_enrichment)
     sns.heatmap(
         log2_enrichment,
         xticklabels=all_aa, yticklabels=row_labels,
@@ -1110,8 +1111,8 @@ def plot_rg_loss_transitions(
           f"neg = {counts_matrix[1::2].sum()}")
     print(f"  Fisher tests performed: {n_tests}")
     if len(p_df) > 0:
-        # sig_hits = p_df[p_df["sig"] != "n.s."]
-        sig_hits = p_df
+        sig_hits = p_df[p_df["sig"] != "n.s."]
+        # sig_hits = p_df
         if len(sig_hits) > 0:
             print(f"  Significant transitions (Bonferroni):")
             print(sig_hits.to_string(index=False))
@@ -1357,7 +1358,7 @@ def plot_rg_gain_transitions(
                 counts.values / expected,
                 np.nan,
             )
-            print(enrichment)
+            # print(enrichment)
             print("____")
             enrichment_rows.append(enrichment)
     # print(enrichment_rows)
@@ -1365,9 +1366,11 @@ def plot_rg_gain_transitions(
     enrichment_matrix = np.vstack(enrichment_rows)
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        pseudo = 1e-6
-        log2_enrichment = np.log2(enrichment_matrix + pseudo)
-    print(log2_enrichment)
+        log2_enrichment = np.log2(enrichment_matrix)
+        log2_enrichment = np.nan_to_num(log2_enrichment, neginf=np.nan)
+        # pseudo = 1e-6
+        # log2_enrichment = np.log2(enrichment_matrix + pseudo)
+    # print(log2_enrichment)
     # Per-cell Fisher's exact (pos vs neg) for each (source → target)
     sig_matrix = np.full_like(counts_matrix, "", dtype=object)
     p_records = []
@@ -1433,9 +1436,10 @@ def plot_rg_gain_transitions(
     # Plot
     fig, ax = plt.subplots(figsize=FIGSIZE_DOUBLE)
     vmax = np.nanmax(np.abs(log2_enrichment))
-
+    mask = np.isnan(log2_enrichment)
     sns.heatmap(
         log2_enrichment,
+        mask=mask,
         xticklabels=all_aa, yticklabels=row_labels,
         cmap="RdBu_r", center=0, vmin=-vmax, vmax=vmax,
         annot=annot, fmt="", annot_kws={"size": 6},
