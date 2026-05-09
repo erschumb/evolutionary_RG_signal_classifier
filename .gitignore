@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.gz
+*.zip
 .env
 .vscode/
 

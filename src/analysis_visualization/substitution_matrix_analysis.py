@@ -1381,3 +1381,820 @@ def run_codon_substitution_analysis(
  
     return enrichment
  
+# ════════════════════════════════════════════════════════════════════════════
+# Marginal substitution distribution analysis
+# ════════════════════════════════════════════════════════════════════════════
+
+from scipy.stats import chi2_contingency
+
+# ════════════════════════════════════════════════════════════════════════════
+# SNP-reachability dict — single nucleotide substitution constraints
+# ════════════════════════════════════════════════════════════════════════════
+
+_CODON_TABLE_SNP = {
+    'TTT': 'F', 'TTC': 'F',
+    'TTA': 'L', 'TTG': 'L', 'CTT': 'L', 'CTC': 'L', 'CTA': 'L', 'CTG': 'L',
+    'TCT': 'S', 'TCC': 'S', 'TCA': 'S', 'TCG': 'S', 'AGT': 'S', 'AGC': 'S',
+    'TAT': 'Y', 'TAC': 'Y',
+    'TGT': 'C', 'TGC': 'C', 'TGG': 'W',
+    'CCT': 'P', 'CCC': 'P', 'CCA': 'P', 'CCG': 'P',
+    'CAT': 'H', 'CAC': 'H', 'CAA': 'Q', 'CAG': 'Q',
+    'CGT': 'R', 'CGC': 'R', 'CGA': 'R', 'CGG': 'R',
+    'ATT': 'I', 'ATC': 'I', 'ATA': 'I', 'ATG': 'M',
+    'ACT': 'T', 'ACC': 'T', 'ACA': 'T', 'ACG': 'T',
+    'AAT': 'N', 'AAC': 'N', 'AAA': 'K', 'AAG': 'K',
+    'AGA': 'R', 'AGG': 'R',
+    'GTT': 'V', 'GTC': 'V', 'GTA': 'V', 'GTG': 'V',
+    'GCT': 'A', 'GCC': 'A', 'GCA': 'A', 'GCG': 'A',
+    'GAT': 'D', 'GAC': 'D', 'GAA': 'E', 'GAG': 'E',
+    'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G',
+}
+
+def _build_snp_reachability() -> dict[str, list[str]]:
+    """
+    For each amino acid, return the sorted list of amino acids reachable
+    via exactly one nucleotide substitution (missense only, no stops).
+    Uses ORDERED_AA ordering for the target lists.
+    """
+    src_codons: dict[str, list[str]] = {}
+    for codon, aa in _CODON_TABLE_SNP.items():
+        src_codons.setdefault(aa, []).append(codon)
+
+    reachability: dict[str, list[str]] = {}
+    for src_aa, codons in src_codons.items():
+        reachable: set[str] = set()
+        for codon in codons:
+            for pos in range(3):
+                for base in "ACGT":
+                    if base == codon[pos]:
+                        continue
+                    mutant = codon[:pos] + base + codon[pos + 1:]
+                    tgt = _CODON_TABLE_SNP.get(mutant)  # None = stop codon
+                    if tgt is not None and tgt != src_aa:
+                        reachable.add(tgt)
+        # Return in ORDERED_AA order for consistent plotting
+        reachability[src_aa] = [aa for aa in ORDERED_AA if aa in reachable]
+
+    return reachability
+
+# Built once at module load — import this wherever needed
+SNP_REACHABLE: dict[str, list[str]] = _build_snp_reachability()
+
+
+def compute_marginal_substitution_distributions(
+    df: pd.DataFrame,
+    group_col: str = "group",
+    pos_label: str = "pos",
+    neg_label: str = "neg",
+    before_col: str = "before_aa",
+    after_col: str = "after_aa",
+    consequence_col: str = "Consequence",
+    min_total: int = 50,
+) -> pd.DataFrame:
+    """
+    [Dataset-agnostic]
+    For each source AA, compare the distribution of SNP-reachable target AAs
+    between pos and neg groups via chi-squared + KL divergence.
+    Only biochemically possible single-nucleotide substitutions are tested.
+    FDR correction over 150 reachable pairs (not 380).
+    """
+    missense = df[
+        df[consequence_col].fillna("").str.contains("missense_variant") &
+        df[before_col].notna() & df[after_col].notna() &
+        df[before_col].isin(ORDERED_AA) & df[after_col].isin(ORDERED_AA)
+    ].copy()
+    missense = missense[missense[before_col] != missense[after_col]]
+
+    # Drop SNP-impossible rows — they shouldn't be in VEP missense output
+    # but guard against annotation artifacts
+    missense = missense[
+        missense.apply(
+            lambda r: r[after_col] in SNP_REACHABLE.get(r[before_col], []),
+            axis=1,
+        )
+    ]
+
+    pos_df = missense[missense[group_col] == pos_label]
+    neg_df = missense[missense[group_col] == neg_label]
+
+    records = []
+    tested_rows = []
+
+    for src in ORDERED_AA:
+        tgts = SNP_REACHABLE[src]  # only reachable targets
+
+        pos_sub = pos_df[pos_df[before_col] == src]
+        neg_sub = neg_df[neg_df[before_col] == src]
+
+        pos_counts = np.array(
+            [(pos_sub[after_col] == t).sum() for t in tgts], dtype=float
+        )
+        neg_counts = np.array(
+            [(neg_sub[after_col] == t).sum() for t in tgts], dtype=float
+        )
+
+        n_pos = pos_counts.sum()
+        n_neg = neg_counts.sum()
+        total = n_pos + n_neg
+
+        rec = {
+            "source_aa": src,
+            "n_pos": int(n_pos),
+            "n_neg": int(n_neg),
+            "n_reachable_targets": len(tgts),
+            "total": int(total),
+            "reachable_targets": tgts,
+            "counts_pos": dict(zip(tgts, pos_counts.astype(int))),
+            "counts_neg": dict(zip(tgts, neg_counts.astype(int))),
+            "tested": total >= min_total and n_pos >= 5 and n_neg >= 5,
+            "chi2": np.nan, "p_value": np.nan, "fdr": np.nan,
+            "kl_symmetric": np.nan,
+            "freq_pos": {}, "freq_neg": {},
+        }
+
+        if rec["tested"]:
+            eps = 0.5
+            freq_pos_smooth = (pos_counts + eps) / (n_pos + eps * len(tgts))
+            freq_neg_smooth = (neg_counts + eps) / (n_neg + eps * len(tgts))
+
+            rec["freq_pos"] = dict(zip(tgts, (pos_counts / n_pos).round(4)))
+            rec["freq_neg"] = dict(zip(tgts, (neg_counts / n_neg).round(4)))
+
+            contingency = np.vstack([pos_counts, neg_counts])
+            mask = contingency.sum(axis=0) > 0
+            chi2_stat, p, _, _ = chi2_contingency(contingency[:, mask])
+            rec["chi2"] = chi2_stat
+            rec["p_value"] = p
+
+            kl_pn = np.sum(freq_pos_smooth * np.log(freq_pos_smooth / freq_neg_smooth))
+            kl_np = np.sum(freq_neg_smooth * np.log(freq_neg_smooth / freq_pos_smooth))
+            rec["kl_symmetric"] = (kl_pn + kl_np) / 2
+
+            tested_rows.append((src, chi2_stat, p))
+
+        records.append(rec)
+
+    result_df = pd.DataFrame(records).set_index("source_aa")
+    if tested_rows:
+        raw_ps = [r[2] for r in tested_rows]
+        _, corrected, _, _ = multipletests(raw_ps, method="fdr_bh")
+        for (src, _, _), fdr_val in zip(tested_rows, corrected):
+            result_df.loc[src, "fdr"] = fdr_val
+
+    return result_df
+
+
+def plot_marginal_substitution_distributions(
+    result_df: pd.DataFrame,
+    dataset: str = "gnomad",
+    save: bool = True,
+    fdr_threshold: float = 0.05,
+    title_suffix: str = "",
+) -> plt.Figure:
+    """
+    Grid of paired bar charts — one panel per tested source AA.
+    X-axis shows only SNP-reachable target AAs (varies per panel).
+    Significant panels (FDR < threshold) are highlighted in title.
+    """
+    pos_color = GROUP_COLORS.get("pos", "#4daf4a")
+    neg_color = GROUP_COLORS.get("neg", "#e41a1c")
+
+    group_palette = {
+        "Pos": "#2166ac", "Neg": "#d73027", "Polar": "#74add1",
+        "Aromatic": "#984ea3", "Hydrophobic": "#4dac26", "C/G/P": "#8c510a",
+    }
+
+    tested = result_df[result_df["tested"]]
+    panel_order = [aa for aa in ORDERED_AA if aa in tested.index]
+    n_panels = len(panel_order)
+    if n_panels == 0:
+        print("No source AAs passed the min_total filter.")
+        return None
+
+    ncols = 4
+    nrows = int(np.ceil(n_panels / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(ncols * 4.5, nrows * 3.4),
+        sharey=False,
+    )
+    axes_flat = axes.flatten() if n_panels > 1 else [axes]
+
+    for ax_idx, src in enumerate(panel_order):
+        ax = axes_flat[ax_idx]
+        row = tested.loc[src]
+        tgts = row["reachable_targets"]  # only SNP-reachable, in ORDERED_AA order
+
+        freq_pos = np.array([row["freq_pos"].get(t, 0.0) for t in tgts])
+        freq_neg = np.array([row["freq_neg"].get(t, 0.0) for t in tgts])
+        cnt_pos  = np.array([row["counts_pos"].get(t, 0)  for t in tgts])
+        cnt_neg  = np.array([row["counts_neg"].get(t, 0)  for t in tgts])
+
+        x = np.arange(len(tgts))
+        width = 0.38
+        bars_p = ax.bar(x - width/2, freq_pos, width,
+                        color=pos_color, alpha=0.85, label="pos")
+        bars_n = ax.bar(x + width/2, freq_neg, width,
+                        color=neg_color, alpha=0.85, label="neg")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(tgts, fontsize=8)
+        for tick, tgt in zip(ax.get_xticklabels(), tgts):
+            tick.set_color(group_palette.get(AA_GROUPS.get(tgt, ""), "black"))
+
+        # Group separators on x-axis
+        prev_g = AA_GROUPS.get(tgts[0])
+        for i, t in enumerate(tgts[1:], 1):
+            g = AA_GROUPS.get(t)
+            if g != prev_g:
+                ax.axvline(i - 0.5, color="gray", lw=0.5,
+                           linestyle="--", alpha=0.5)
+                prev_g = g
+
+        ax.set_ylabel("Frequency", fontsize=8)
+        ax.tick_params(axis="y", labelsize=7)
+        ax.set_xlim(-0.6, len(tgts) - 0.4)
+        ax.yaxis.grid(True, alpha=0.3, linewidth=0.5)
+        ax.set_axisbelow(True)
+
+        fdr_val = row["fdr"]
+        kl = row["kl_symmetric"]
+        is_sig = pd.notna(fdr_val) and fdr_val < fdr_threshold
+        stars = significance_stars(fdr_val) if pd.notna(fdr_val) else ""
+        sig_str = f" {stars}" if stars != "n.s." else ""
+        title_color = "darkred" if is_sig else "black"
+        title_weight = "bold" if is_sig else "normal"
+        n_tgts = row["n_reachable_targets"]
+        ax.set_title(
+            f"{src}  [{n_tgts} reachable]  "
+            f"(n_pos={row['n_pos']:,}, n_neg={row['n_neg']:,})\n"
+            f"FDR={fdr_val:.2e}{sig_str}   KL={kl:.3f}",
+            fontsize=7.5, color=title_color, fontweight=title_weight,
+        )
+
+    for ax_idx in range(len(panel_order), len(axes_flat)):
+        axes_flat[ax_idx].set_visible(False)
+
+    from matplotlib.patches import Patch
+    fig.legend(
+        handles=[
+            Patch(facecolor=pos_color, alpha=0.85, label="pos"),
+            Patch(facecolor=neg_color, alpha=0.85, label="neg"),
+        ],
+        loc="lower right", fontsize=10, framealpha=0.9,
+    )
+
+    title = f"Marginal substitution distributions — SNP-reachable pairs only ({dataset})"
+    if title_suffix:
+        title += f" — {title_suffix}"
+    fig.suptitle(title, fontsize=13, y=1.01)
+    plt.tight_layout()
+
+    if save:
+        save_figure(fig, "marginal_substitution_distributions", dataset=dataset)
+
+    return fig
+
+def run_marginal_substitution_analysis(
+    df: pd.DataFrame,
+    group_col: str = "group",
+    pos_label: str = "pos",
+    neg_label: str = "neg",
+    before_col: str = "before_aa",
+    after_col: str = "after_aa",
+    consequence_col: str = "Consequence",
+    min_total: int = 50,
+    fdr_threshold: float = 0.05,
+    dataset: str = "gnomad",
+    save: bool = True,
+    sig_only: bool = False,           # ← new
+    source_aas: list[str] | None = None,  # ← new: explicit AA selection
+) -> pd.DataFrame:
+    """
+    [Dataset-agnostic]
+    End-to-end marginal substitution analysis: compute, plot, print summary.
+    Returns the result DataFrame for downstream use.
+    """
+    result_df = compute_marginal_substitution_distributions(
+        df, group_col=group_col, pos_label=pos_label, neg_label=neg_label,
+        before_col=before_col, after_col=after_col,
+        consequence_col=consequence_col, min_total=min_total,
+    )
+
+
+
+    # ── Printed summary ───────────────────────────────────────────────────
+    tested = result_df[result_df["tested"]].copy()
+    sig = tested[tested["fdr"] < fdr_threshold].sort_values(
+        "kl_symmetric", ascending=False
+    )
+        # Determine which AAs to plot
+    if source_aas is not None:
+        # Explicit selection overrides sig_only
+        aas_to_plot = [aa for aa in source_aas if aa in result_df.index]
+    elif sig_only:
+        aas_to_plot = sig.index.tolist()  # already sorted by KL
+    else:
+        aas_to_plot = None  # plot_func will use all tested AAs
+
+    if sig_only or source_aas is not None:
+        plot_marginal_substitution_distributions_focused(
+            result_df,
+            source_aas=aas_to_plot,
+            dataset=dataset,
+            save=save,
+            fdr_threshold=fdr_threshold,
+        )
+    else:
+        plot_marginal_substitution_distributions(
+            result_df, dataset=dataset, save=save,
+            fdr_threshold=fdr_threshold,
+        )
+
+    print(f"\n── Marginal substitution distributions ({dataset}) ──")
+    print(f"  Source AAs tested (n ≥ {min_total}): {len(tested)}")
+    print(f"  Significant at FDR < {fdr_threshold}: {len(sig)}")
+
+    if len(sig) > 0:
+        print("\n  Significant source AAs (ranked by KL divergence):")
+        summary = sig[["n_pos", "n_neg", "chi2", "p_value", "fdr", "kl_symmetric"]].copy()
+        summary.columns = ["n_pos", "n_neg", "chi2", "p_raw", "fdr", "KL_sym"]
+        summary["chi2"] = summary["chi2"].round(2)
+        summary["p_raw"] = summary["p_raw"].apply(lambda x: f"{x:.2e}")
+        summary["fdr"] = summary["fdr"].apply(lambda x: f"{x:.2e}")
+        summary["KL_sym"] = summary["KL_sym"].round(4)
+        print(summary.to_string())
+
+    not_tested = result_df[~result_df["tested"]]
+    if len(not_tested) > 0:
+        print(f"\n  Skipped (< {min_total} total observations):",
+              ", ".join(not_tested.index.tolist()))
+
+    return result_df
+
+def plot_marginal_substitution_distributions_focused(
+    result_df: pd.DataFrame,
+    source_aas: list[str],
+    dataset: str = "gnomad",
+    save: bool = True,
+    fdr_threshold: float = 0.05,
+    title_suffix: str = "",
+) -> plt.Figure | None:
+    """
+    Publication-ready marginal substitution plot for a selected subset of
+    source AAs (typically significant ones). Single row of panels, styled
+    to match physchem_analysis.py — no redundant gray panels, tighter layout.
+    """
+    if not source_aas:
+        print("No source AAs to plot.")
+        return None
+
+    # Filter to AAs that actually have data
+    available = [aa for aa in source_aas if aa in result_df.index
+                 and result_df.loc[aa, "tested"]]
+    if not available:
+        print("None of the requested AAs passed the min_total filter.")
+        return None
+
+    n = len(available)
+    fig, axes = plt.subplots(
+        1, n,
+        figsize=(n * 3.6, 3.8),
+        sharey=False,
+    )
+    if n == 1:
+        axes = [axes]
+
+    pos_color = GROUP_COLORS["pos"]
+    neg_color = GROUP_COLORS["neg"]
+    group_palette = {
+        "Pos": "#2166ac", "Neg": "#d73027", "Polar": "#74add1",
+        "Aromatic": "#984ea3", "Hydrophobic": "#4dac26", "C/G/P": "#8c510a",
+    }
+
+    for ax, src in zip(axes, available):
+        row = result_df.loc[src]
+        tgts = row["reachable_targets"]
+
+        freq_pos = np.array([row["freq_pos"].get(t, 0.0) for t in tgts])
+        freq_neg = np.array([row["freq_neg"].get(t, 0.0) for t in tgts])
+
+        x = np.arange(len(tgts))
+        width = 0.38
+        ax.bar(x - width/2, freq_pos, width, color=pos_color,
+               alpha=0.85, label="pos")
+        ax.bar(x + width/2, freq_neg, width, color=neg_color,
+               alpha=0.85, label="neg")
+
+        # X tick labels colored by physicochemical group
+        ax.set_xticks(x)
+        ax.set_xticklabels(tgts, fontsize=9, fontweight="bold")
+        for tick, tgt in zip(ax.get_xticklabels(), tgts):
+            tick.set_color(group_palette.get(AA_GROUPS.get(tgt, ""), "black"))
+
+        # Group separators
+        prev_g = AA_GROUPS.get(tgts[0])
+        for i, t in enumerate(tgts[1:], 1):
+            g = AA_GROUPS.get(t)
+            if g != prev_g:
+                ax.axvline(i - 0.5, color="gray", lw=0.5,
+                           linestyle="--", alpha=0.5)
+                prev_g = g
+
+        ax.set_xlim(-0.6, len(tgts) - 0.4)
+        ax.yaxis.grid(True, alpha=0.3, linewidth=0.5)
+        ax.set_axisbelow(True)
+        sns.despine(ax=ax)
+
+        # Y label only on leftmost panel
+        if ax is axes[0]:
+            ax.set_ylabel("Substitution frequency", fontsize=9)
+        else:
+            ax.set_ylabel("")
+        ax.tick_params(axis="y", labelsize=8)
+
+        # Stats in top-right corner of each panel
+        fdr_val = row["fdr"]
+        kl      = row["kl_symmetric"]
+        stars   = significance_stars(fdr_val) if pd.notna(fdr_val) else ""
+        is_sig  = pd.notna(fdr_val) and fdr_val < fdr_threshold
+        stats_text = (
+            f"χ² FDR={fdr_val:.2e}\n"
+            f"{stars}\n"
+        )
+        ax.text(
+            0.5, 1.02, stats_text,
+            transform=ax.transAxes, fontsize=7,
+            va="top", ha="center",
+            color="black",
+            bbox=dict(facecolor="white", alpha=0.85,
+                      edgecolor="none", pad=2),
+        )
+
+        # Panel title: source AA + group + counts
+        # grp = AA_GROUPS.get(src, "")
+        ax.set_title(
+            f"{src}\n"
+            f"n_pos={row['n_pos']:,}  n_neg={row['n_neg']:,}",
+            fontsize=9,
+            fontweight="bold" if is_sig else "normal",
+            color= "black",pad=15
+
+        )
+
+    # Shared legend on last panel
+    from matplotlib.patches import Patch
+    axes[-1].legend(
+        handles=[
+            Patch(facecolor=pos_color, alpha=0.85, label="pos"),
+            Patch(facecolor=neg_color, alpha=0.85, label="neg"),
+        ],
+        loc="upper left", fontsize=8, framealpha=0.9,
+    )
+
+    title = f"Marginal substitution distributions ({dataset})"
+    if title_suffix:
+        title += f" — {title_suffix}"
+    fig.suptitle(title, fontsize=11, y=1.02)
+    plt.tight_layout()
+
+    if save:
+        suffix = "sig" if not title_suffix else title_suffix.replace(" ", "_")
+        save_figure(fig, f"marginal_substitution_focused_{suffix}", dataset=dataset)
+
+    return fig
+
+# ════════════════════════════════════════════════════════════════════════════
+# Grouped (physicochemical) substitution matrix
+# ════════════════════════════════════════════════════════════════════════════
+
+# Map each AA to its group index in GROUP_ORDER for fast lookup
+_AA_TO_GROUP = {aa: grp for aa, grp in AA_GROUPS.items()}
+
+def compute_grouped_substitution_matrix(
+    df: pd.DataFrame,
+    group_col: str = "group",
+    pos_label: str = "pos",
+    neg_label: str = "neg",
+    before_col: str = "before_aa",
+    after_col: str = "after_aa",
+    consequence_col: str = "Consequence",
+) -> dict:
+    """
+    [Dataset-agnostic]
+    Pool raw missense counts into 6×6 physicochemical group bins,
+    then compute log2 OR and Fisher p-value per group-pair cell.
+
+    Critically: counts are pooled BEFORE any OR or p-value calculation
+    (Mantel-Haenszel-style), so the statistics are computed on the
+    full pooled contingency — not averaged from per-cell results.
+
+    Only SNP-reachable (aa_from, aa_to) pairs contribute to each bin.
+    Diagonal (same-group substitutions) is included but not tested.
+
+    Returns dict with:
+        counts_pos, counts_neg  — 6×6 DataFrames of pooled raw counts
+        freq_pos, freq_neg      — 6×6 row-normalized frequency matrices
+        log2_or                 — 6×6 log2 odds ratio (NaN if any zero)
+        pval, fdr               — Fisher p-value and BH-corrected FDR
+        n_tested                — off-diagonal cells tested
+    """
+    missense = df[
+        df[consequence_col].fillna("").str.contains("missense_variant") &
+        df[before_col].notna() & df[after_col].notna() &
+        df[before_col].isin(ORDERED_AA) & df[after_col].isin(ORDERED_AA)
+    ].copy()
+    # Restrict to SNP-reachable pairs only before pooling
+    missense = missense[
+        missense.apply(
+            lambda r: r[after_col] in SNP_REACHABLE.get(r[before_col], []),
+            axis=1,
+        )
+    ]
+    # Add group columns
+    missense["grp_from"] = missense[before_col].map(_AA_TO_GROUP)
+    missense["grp_to"]   = missense[after_col].map(_AA_TO_GROUP)
+
+    pos_df = missense[missense[group_col] == pos_label]
+    neg_df = missense[missense[group_col] == neg_label]
+
+    # Pool counts into 6×6
+    def _pool(sub):
+        counts = pd.DataFrame(0, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+        for (gf, gt), grp in sub.groupby(["grp_from", "grp_to"]):
+            counts.loc[gf, gt] = len(grp)
+        return counts
+
+    counts_pos = _pool(pos_df)
+    counts_neg = _pool(neg_df)
+
+    # Row-normalize
+    def _row_norm(counts):
+        row_sums = counts.sum(axis=1).replace(0, np.nan)
+        return counts.div(row_sums, axis=0).fillna(0)
+
+    freq_pos = _row_norm(counts_pos)
+    freq_neg = _row_norm(counts_neg)
+
+    # Per-cell Fisher + log2 OR on pooled counts
+    log2_or = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+    pval    = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+    tested_cells = []
+
+    for gf in GROUP_ORDER[::-1]:
+        row_total_pos = counts_pos.loc[gf].sum()
+        row_total_neg = counts_neg.loc[gf].sum()
+        for gt in GROUP_ORDER:
+            if gf == gt:
+                continue  # skip diagonal
+            pos_c = int(counts_pos.loc[gf, gt])
+            neg_c = int(counts_neg.loc[gf, gt])
+            pos_out = row_total_pos - pos_c
+            neg_out = row_total_neg - neg_c
+
+            if 0 in (pos_c, pos_out, neg_c, neg_out):
+                _, p = fisher_exact([[pos_c, pos_out], [neg_c, neg_out]])
+                pval.loc[gf, gt] = p
+                tested_cells.append((gf, gt, p))
+                continue
+
+            odds, p = fisher_exact([[pos_c, pos_out], [neg_c, neg_out]])
+            log2_or.loc[gf, gt] = np.log2(odds)
+            pval.loc[gf, gt] = p
+            tested_cells.append((gf, gt, p))
+
+    # BH FDR over all 30 off-diagonal cells
+    fdr = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+    if tested_cells:
+        raw_ps = [c[2] for c in tested_cells]
+        _, corrected, _, _ = multipletests(raw_ps, method="fdr_bh")
+        for (gf, gt, _), p_fdr in zip(tested_cells, corrected):
+            fdr.loc[gf, gt] = p_fdr
+
+    return {
+        "counts_pos": counts_pos,
+        "counts_neg": counts_neg,
+        "freq_pos":   freq_pos,
+        "freq_neg":   freq_neg,
+        "log2_or":    log2_or,
+        "pval":       pval,
+        "fdr":        fdr,
+        "n_tested":   len(tested_cells),
+    }
+
+
+def plot_grouped_substitution_matrix(
+    result: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+    vmax_or: float | None = None,
+    title_suffix: str = "",
+) -> plt.Figure:
+    """
+    Two-panel figure:
+      Left:  log2 OR heatmap (6×6) with FDR significance stars.
+             Diagonal masked gray (same-group, not tested).
+      Right: paired bar chart of row-normalized frequencies per source group,
+             giving the absolute frequency context alongside the OR.
+    """
+    log2_or  = result["log2_or"]
+    fdr      = result["fdr"]
+    freq_pos = result["freq_pos"]
+    freq_neg = result["freq_neg"]
+    counts_pos = result["counts_pos"]
+    counts_neg = result["counts_neg"]
+
+    if vmax_or is None:
+        finite = log2_or.values[np.isfinite(log2_or.values)]
+        vmax_or = float(np.max(np.abs(finite))) if len(finite) else 1.0
+
+    pos_color = GROUP_COLORS.get("pos", "#4daf4a")
+    neg_color = GROUP_COLORS.get("neg", "#e41a1c")
+
+    cmap = _make_diverging_cmap()
+    cmap.set_bad(color="#DDDDDD")
+
+    fig = plt.figure(figsize=(16, 6))
+    gs  = fig.add_gridspec(1, 2, width_ratios=[1, 1.6], wspace=0.35)
+    ax_heat = fig.add_subplot(gs[0])
+    ax_bar  = fig.add_subplot(gs[1])
+
+    # ── Panel 1: log2 OR heatmap ─────────────────────────────────────────
+    # Mask diagonal
+    plot_or = log2_or.copy().astype(float)
+    for g in GROUP_ORDER[::-1]:
+        plot_or.loc[g, g] = np.nan
+
+    sns.heatmap(
+        plot_or,
+        ax=ax_heat,
+        cmap=cmap, center=0,
+        vmin=-vmax_or, vmax=vmax_or,
+        linewidths=0.5, linecolor="white",
+        cbar_kws={"label": "log₂(OR)  pos vs neg", "shrink": 0.8},
+        square=True,
+    )
+    ax_heat.set_title("Grouped substitution enrichment\n(SNP-reachable pairs only)")
+    ax_heat.set_xlabel("AA group → (target)")
+    ax_heat.set_ylabel("AA group from (source)")
+    ax_heat.tick_params(axis="both", labelsize=9)
+
+    # Significance stars
+    for i, gf in enumerate(GROUP_ORDER[::-1]):
+        for j, gt in enumerate(GROUP_ORDER):
+            if gf == gt:
+                continue
+            p = fdr.loc[gf, gt]
+            if pd.isna(p):
+                continue
+            stars = significance_stars(p)
+            if stars != "n.s.":
+                ax_heat.text(
+                    j + 0.5, i + 0.5, stars,
+                    ha="center", va="center",
+                    fontsize=10, fontweight="bold", color="black",
+                )
+
+    # ── Panel 2: paired bar chart — row-normalized frequencies ───────────
+    n_groups = len(GROUP_ORDER)
+    x = np.arange(n_groups)          # target groups on x-axis
+    n_src = n_groups                  # one cluster per source group
+    cluster_width = 0.7
+    bar_w = cluster_width / 2
+
+    # Vertical offset between source-group clusters
+    y_offsets = np.linspace(0, (n_src - 1) * 0.55, n_src)
+    cmap_src = plt.cm.tab10(np.linspace(0, 0.6, n_src))
+
+    for src_idx, gf in enumerate(GROUP_ORDER[::-1]):
+        fp = np.array([freq_pos.loc[gf, gt] for gt in GROUP_ORDER])
+        fn = np.array([freq_neg.loc[gf, gt] for gt in GROUP_ORDER])
+        offset = src_idx * 0.55        # stack source groups vertically
+
+        # Plot as grouped bars per source, slightly offset vertically
+        # Actually use a cleaner approach: facet by source group with color
+        pass  # see below — use a proper grouped approach
+
+    # Better: one subplot-row per source group would be ideal but complex.
+    # Instead: grouped bars where x=target group, hue=pos/neg,
+    # with a separate line per source group shown via transparency gradient.
+    # For 6 source groups × 6 targets × 2 bars = 72 bars — use small multiples.
+
+    # Replace ax_bar with a 2×3 grid of mini bar charts
+    ax_bar.set_visible(False)
+    fig.set_size_inches(16, 10)
+
+    # Re-create layout with proper mini-grid for bar panels
+    gs2 = fig.add_gridspec(
+        2, 3,
+        left=0.42, right=0.98,
+        top=0.92, bottom=0.08,
+        hspace=0.55, wspace=0.35,
+    )
+
+    for src_idx, gf in enumerate(GROUP_ORDER[::-1]):
+        row, col = divmod(src_idx, 3)
+        ax = fig.add_subplot(gs2[row, col])
+
+        tgt_groups = [gt for gt in GROUP_ORDER if gt != gf]
+        x = np.arange(len(tgt_groups))
+        fp = np.array([freq_pos.loc[gf, gt] for gt in tgt_groups])
+        fn = np.array([freq_neg.loc[gf, gt] for gt in tgt_groups])
+        cp = np.array([counts_pos.loc[gf, gt] for gt in tgt_groups])
+        cn = np.array([counts_neg.loc[gf, gt] for gt in tgt_groups])
+
+        width = 0.35
+        ax.bar(x - width/2, fp, width, color=pos_color, alpha=0.85, label="pos")
+        ax.bar(x + width/2, fn, width, color=neg_color, alpha=0.85, label="neg")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(
+            [gt[:3] for gt in tgt_groups],   # abbreviated group names
+            fontsize=8, rotation=30, ha="right",
+        )
+        ax.set_ylabel("Row freq.", fontsize=7)
+        ax.tick_params(axis="y", labelsize=7)
+        ax.yaxis.grid(True, alpha=0.3, linewidth=0.5)
+        ax.set_axisbelow(True)
+
+        # Stars per bar pair from FDR
+        ymax = max(fp.max(), fn.max()) if (len(fp) and len(fn)) else 0.1
+        for i, gt in enumerate(tgt_groups):
+            p = fdr.loc[gf, gt]
+            stars = significance_stars(p) if pd.notna(p) else ""
+            if stars and stars != "n.s.":
+                ax.text(i, ymax * 1.05, stars, ha="center",
+                        fontsize=8, fontweight="bold", color="darkred")
+
+        n_pos_total = int(counts_pos.loc[gf].sum())
+        n_neg_total = int(counts_neg.loc[gf].sum())
+        ax.set_title(
+            f"from {gf}\n(n_pos={n_pos_total:,}, n_neg={n_neg_total:,})",
+            fontsize=8,
+        )
+
+    from matplotlib.patches import Patch
+    fig.legend(
+        handles=[
+            Patch(facecolor=pos_color, alpha=0.85, label="pos"),
+            Patch(facecolor=neg_color, alpha=0.85, label="neg"),
+        ],
+        loc="upper right", bbox_to_anchor=(0.99, 0.99),
+        fontsize=9, framealpha=0.9,
+    )
+
+    title = f"Grouped substitution matrix — physicochemical groups ({dataset})"
+    if title_suffix:
+        title += f" — {title_suffix}"
+    fig.suptitle(title, fontsize=13, x=0.5, y=0.99)
+
+    if save:
+        save_figure(fig, "substitution_matrix_grouped", dataset=dataset)
+
+    # ── Printed summary ───────────────────────────────────────────────────
+    n_sig = int((result["fdr"] < 0.05).sum().sum())
+    print(f"\n── Grouped substitution matrix ({dataset}) ──")
+    print(f"  Cells tested (off-diagonal): {result['n_tested']}")
+    print(f"  Cells significant at FDR < 0.05: {n_sig}")
+    if n_sig > 0:
+        rows = []
+        for gf in GROUP_ORDER[::-1]:
+            for gt in GROUP_ORDER:
+                if gf == gt: continue
+                p = result["fdr"].loc[gf, gt]
+                lor = result["log2_or"].loc[gf, gt]
+                if pd.notna(p) and p < 0.05:
+                    rows.append({
+                        "from": gf, "to": gt,
+                        "log2_or": round(lor, 3) if pd.notna(lor) else np.nan,
+                        "fdr": p,
+                        "counts_pos": int(counts_pos.loc[gf, gt]),
+                        "counts_neg": int(counts_neg.loc[gf, gt]),
+                    })
+        sig_df = pd.DataFrame(rows).sort_values("log2_or", key=abs, ascending=False)
+        print("\n  Significant group transitions:")
+        print(sig_df.to_string(index=False))
+
+    return fig
+
+
+def run_grouped_substitution_analysis(
+    df: pd.DataFrame,
+    group_col: str = "group",
+    pos_label: str = "pos",
+    neg_label: str = "neg",
+    before_col: str = "before_aa",
+    after_col: str = "after_aa",
+    consequence_col: str = "Consequence",
+    dataset: str = "gnomad",
+    save: bool = True,
+    **plot_kwargs,
+) -> dict:
+    """[Dataset-agnostic] End-to-end grouped substitution analysis."""
+    result = compute_grouped_substitution_matrix(
+        df, group_col=group_col, pos_label=pos_label, neg_label=neg_label,
+        before_col=before_col, after_col=after_col,
+        consequence_col=consequence_col,
+    )
+    plot_grouped_substitution_matrix(result, dataset=dataset, save=save, **plot_kwargs)
+    return result

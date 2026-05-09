@@ -307,119 +307,208 @@ def test_codon_usage_all_pairs(codon_counts: pd.DataFrame) -> pd.DataFrame:
     return out
 
 # ════════════════════════════════════════════════════════════════════════════
-# Plotting: stacked bars per AA with reference line
+# Plotting: stacked bars per AA with reference comparison
 # ════════════════════════════════════════════════════════════════════════════
 
 GROUP_COLORS_PALE = {"pos": "#B8DFAA", "neg": "#E5BEBE"}
 
 
-def _codon_palette(n: int) -> list[str]:
-    """Return a categorical palette for codons within a single AA."""
-    # Use seaborn's colorblind palette extended if needed
+def _codon_palette(n: int) -> list[tuple[float, float, float]]:
+    """Categorical palette for codons within a single AA."""
     base = sns.color_palette("colorblind", n_colors=max(n, 6))
     return list(base[:n])
+
+
+def _text_color_for_bg(rgb: tuple[float, float, float]) -> str:
+    """Return 'white' or 'black' for readable text on a given RGB color."""
+    r, g, b = rgb[:3]
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "white" if luminance < 0.55 else "black"
+
 
 def plot_codon_usage(
     codon_counts: pd.DataFrame,
     test_results: pd.DataFrame,
     dataset: str = "gnomad",
     save: bool = True,
-    ncols: int = 6,
-) -> plt.Figure:
+    ncols: int = 3,
+    source_aas: list[str] | None = None,
+    sig_only: bool = False,
+    fdr_threshold: float = 0.05,
+    show_reference: bool = True,
+    title_suffix: str = "",
+) -> plt.Figure | None:
     """
     [Dataset-agnostic]
-    One subplot per multi-codon AA. Three stacked bars per subplot:
-        pos (regions) | reference (Kazusa human) | neg (regions)
-    Only pos vs neg is tested statistically; the reference is visual context.
-    Sample sizes (n_pos, n_neg) shown below the bars.
+    Stacked-bar codon usage per AA. Supports filtering to a subset of AAs
+    via `source_aas` (explicit list) or `sig_only` (auto-select significant).
+
+    Parameters
+    ----------
+    source_aas : list of AA letters to plot. Overrides sig_only.
+    sig_only   : if True and source_aas is None, plot only AAs with p_fdr < threshold.
+    show_reference : include the Kazusa reference column.
     """
-    aas = MULTI_CODON_AA
-    nrows = int(np.ceil(len(aas) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 2.3, nrows * 2.4),
-                              constrained_layout=True)
+    # ── Decide which AAs to plot ─────────────────────────────────────────
+    if source_aas is not None:
+        aas = [aa for aa in source_aas if aa in MULTI_CODON_AA]
+        # print(source_aas)
+        if not aas:
+            print("None of the requested AAs are multi-codon. Nothing to plot.")
+
+            return None
+    elif sig_only:
+        sig_aas = test_results.loc[
+            test_results["p_fdr"] < fdr_threshold, "aa"
+        ].tolist()
+        if not sig_aas:
+            print(f"No AAs significant at FDR < {fdr_threshold}. Nothing to plot.")
+            return None
+        aas = [aa for aa in MULTI_CODON_AA if aa in sig_aas]
+    else:
+        aas = MULTI_CODON_AA
+
+    # ── Layout ───────────────────────────────────────────────────────────
+    n = len(aas)
+    ncols_eff = min(ncols, n)
+    nrows = int(np.ceil(n / ncols_eff))
+    # Slightly wider per-panel to give room for in-bar codon labels
+    fig, axes = plt.subplots(
+        nrows, ncols_eff,
+        figsize=(ncols_eff * 2.6, nrows * 3),
+        squeeze=False,
+    )
     axes = axes.flatten()
 
-    results_lookup = test_results.set_index("aa")
+    # Safe lookup (avoid DataFrame-on-duplicate-index issue)
+    results_lookup = (
+        test_results.drop_duplicates(subset="aa").set_index("aa")
+    )
 
     for i, aa in enumerate(aas):
         ax = axes[i]
-        codons = _AA_TO_CODONS[aa]
+        codons = sorted(_AA_TO_CODONS[aa])  # stable ordering across runs
 
         # Proportions per group
         sub = codon_counts[codon_counts["aa"] == aa]
-        props = {}
-        totals = {}
+        props, totals = {}, {}
         for group in ("pos", "neg"):
             grp = sub[sub["group"] == group]
-            total = grp["count"].sum()
-            totals[group] = int(total)
+            total = int(grp["count"].sum())
+            totals[group] = total
             if total == 0:
-                props[group] = {c: 0 for c in codons}
+                props[group] = {c: 0.0 for c in codons}
             else:
                 props[group] = {
-                    c: grp.loc[grp["codon"] == c, "count"].sum() / total
+                    c: int(grp.loc[grp["codon"] == c, "count"].sum()) / total
                     for c in codons
                 }
-        props["reference"] = REFERENCE_PROPORTIONS[aa]
+        props["reference"] = {
+            c: REFERENCE_PROPORTIONS[aa].get(c, 0.0) for c in codons
+        }
 
-        # Order: pos | ref | neg
-        bar_labels = [
-            f"pos\nn={totals['pos']:,}",
-            "ref",
-            f"neg\nn={totals['neg']:,}",
-        ]
-        bar_proportions = [props["pos"], props["reference"], props["neg"]]
-        x = np.arange(len(bar_labels))
+        # Bar setup
+        if show_reference:
+            bar_keys   = ["pos", "reference", "neg"]
+            bar_labels = [
+                f"pos\nn={totals['pos']:,}",
+                "ref\n(Kazusa et al.\n(2007))",
+                f"neg\nn={totals['neg']:,}",
+            ]
+            sig_x = (0, 2)
+        else:
+            bar_keys   = ["pos", "neg"]
+            bar_labels = [
+                f"pos\nn={totals['pos']:,}",
+                f"neg\nn={totals['neg']:,}",
+            ]
+            sig_x = (0, 1)
 
+        x = np.arange(len(bar_keys))
         palette = _codon_palette(len(codons))
-        bottoms = np.zeros(len(bar_labels))
+
+        bottoms = np.zeros(len(bar_keys))
         for c_idx, codon in enumerate(codons):
-            vals = np.array([p[codon] for p in bar_proportions])
-            ax.bar(x, vals, bottom=bottoms,
-                   color=palette[c_idx], edgecolor="black", linewidth=0.3,
-                   label=codon, width=0.75)
-            # Label codon inside segment if tall enough
+            vals = np.array([props[k][codon] for k in bar_keys])
+            color = palette[c_idx]
+            ax.bar(
+                x, vals, bottom=bottoms,
+                color=color, edgecolor="white", linewidth=0.4,
+                label=codon, width=0.72,
+            )
+            # In-segment label only when segment is tall enough to be readable
             for b_idx, (val, bot) in enumerate(zip(vals, bottoms)):
-                if val >= 0.10:
+                if val >= 0.05:
                     ax.text(
                         x[b_idx], bot + val / 2, codon,
                         ha="center", va="center",
-                        fontsize=5.5, color="white" if c_idx % 2 else "black",
+                        fontsize=6, color=_text_color_for_bg(color),
+                        fontweight="medium",
                     )
             bottoms += vals
 
         ax.set_xticks(x)
-        ax.set_xticklabels(bar_labels, fontsize=6.5)
-        ax.set_ylim(0, 1.15)
-        ax.set_yticks([0, 0.5, 1.0])
-        ax.set_yticklabels(["0", "0.5", "1"], fontsize=6)
+        ax.set_xticklabels(bar_labels, fontsize=7)
+        ax.set_ylim(0, 1.18)
+        ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
+        ax.set_yticklabels(["0", "", "0.5", "", "1"], fontsize=6)
+        ax.tick_params(axis="y", length=2)
 
-        # Significance annotation (pos vs neg only) — bracket above the outer bars
-        if aa in results_lookup.index:
-            row = results_lookup.loc[aa]
+        # Significance bracket — pos vs neg only
+        row = results_lookup.loc[aa] if aa in results_lookup.index else None
+        if row is not None and pd.notna(row["p_fdr"]):
             sig = row["sig"]
-            p = row["p_fdr"]
+            p = float(row["p_fdr"])
+            is_sig = p < fdr_threshold
         else:
             sig = "n.s."
             p = np.nan
+            is_sig = False
 
-        # Bracket from bar 0 (pos) to bar 2 (neg)
-        y_bar = 1.04
-        ax.plot([0, 2], [y_bar, y_bar], color="black", lw=0.5)
-        ax.text(1, y_bar + 0.01, sig, ha="center", va="bottom", fontsize=7)
+        y_bar = 1.06
+        ax.plot([sig_x[0], sig_x[1]], [y_bar, y_bar],
+                color="black", lw=0.6)
+        # Small caps at bracket ends
+        for xb in sig_x:
+            ax.plot([xb, xb], [y_bar - 0.02, y_bar],
+                    color="black", lw=0.6)
+        ax.text(np.mean(sig_x), y_bar + 0.01, sig,
+                ha="center", va="bottom", fontsize=8,
+                fontweight="bold" if is_sig else "normal")
 
-        # Title: AA letter, bold if significant
-        weight = "bold" if sig not in ("n.s.", "—", "") else "normal"
-        p_text = f" (p={p:.1e})" if pd.notna(p) else ""
-        ax.set_title(f"{aa}{p_text}", fontsize=7.5, fontweight=weight)
-
-        if i % ncols != 0:
-            ax.set_ylabel("")
+        # Panel title
+        if pd.notna(p):
+            p_text = f"  p={p:.1e}"
         else:
-            ax.set_ylabel("Codon proportion", fontsize=7)
+            p_text = ""
+        ax.set_title(
+            f"{aa}\n{p_text}",
+            fontsize=10,
+            fontweight="bold" if is_sig else "normal",
+            color="black",
+        )
 
-        ax.legend(fontsize=5, ncol=1, loc="center left",
-                  bbox_to_anchor=(1.0, 0.5), frameon=False)
+        # Y-label only on left column
+        if i % ncols_eff == 0:
+            ax.set_ylabel("Codon proportion", fontsize=8)
+        else:
+            ax.set_ylabel("")
+
+        # Per-AA legend in the panel — small and out of the way (below x-labels)
+        # Codons that didn't get an in-bar label still need to be identifiable.
+        # We add a compact legend strip above the title for AAs with many codons.
+        # if len(codons) > 2:
+        #     handles = [
+        #         plt.Rectangle((0, 0), 1, 1, color=palette[c_idx])
+        #         for c_idx in range(len(codons))
+        #     ]
+        #     ax.legend(
+        #         handles, codons,
+        #         fontsize=5.5, ncol=min(len(codons), 3),
+        #         loc="upper center", bbox_to_anchor=(0.5, -0.22),
+        #         frameon=False, handlelength=1.0, handleheight=0.8,
+        #         columnspacing=0.8, handletextpad=0.4,
+        #     )
 
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)
@@ -428,23 +517,41 @@ def plot_codon_usage(
     for j in range(len(aas), len(axes)):
         axes[j].set_visible(False)
 
-    fig.suptitle(
-        f"Codon usage per amino acid ({dataset})\n"
-        f"pos vs neg chi² with BH-FDR across {len(aas)} AAs; "
-        f"reference = Kazusa human",
-        fontsize=11,
+    # Title
+    sub_title = "all AAs"
+    if source_aas is not None:
+        sub_title = f"selected AAs: {', '.join(aas)}"
+    elif sig_only:
+        sub_title = f"significant AAs (FDR < {fdr_threshold})"
+    title = (
+        f"Codon usage per amino acid ({dataset}) — {sub_title}\n"
+        f"pos vs neg χ² with BH-FDR across {len(MULTI_CODON_AA)} multi-codon AAs"
     )
-    if save:
-        save_figure(fig, "codon_usage", dataset=dataset)
+    if show_reference:
+        title += "; reference = Kazusa et al. (2007) human"
+    if title_suffix:
+        title += f" — {title_suffix}"
+    fig.suptitle(title, fontsize=11, y=1.00)
 
-    # ── Printed summary ────────────────────────────────────────────────────
-    print(f"\n── Codon usage chi² tests ({dataset}) ──")
+    plt.tight_layout()
+
+    if save:
+        suffix = "all"
+        if source_aas is not None:
+            suffix = "selected"
+        elif sig_only:
+            suffix = "sig"
+        save_figure(fig, f"codon_usage_{suffix}", dataset=dataset)
+
+    # ── Printed summary ──────────────────────────────────────────────────
+    print(f"\n── Codon usage χ² tests ({dataset}) ──")
     out_table = test_results.sort_values("p_fdr").reset_index(drop=True)
-    print(out_table[["aa", "n_pos", "n_neg", "chi2", "p_raw",
-                     "p_fdr", "sig"]].to_string(index=False))
-    n_sig = int((out_table["p_fdr"] < 0.05).sum())
-    print(f"\n  {n_sig} / {len(out_table)} amino acids show significantly "
-          f"different codon usage between pos and neg after FDR.")
+    print(out_table[
+        ["aa", "n_pos", "n_neg", "chi2", "p_raw", "p_fdr", "sig"]
+    ].to_string(index=False))
+    n_sig = int((out_table["p_fdr"] < fdr_threshold).sum())
+    print(f"\n  {n_sig} / {len(out_table)} AAs show significantly different "
+          f"codon usage between pos and neg after FDR (< {fdr_threshold}).")
 
     return fig
 
@@ -457,8 +564,26 @@ def run_codon_usage_analysis(
     region_by_id: dict,
     dataset: str = "gnomad",
     save: bool = True,
-    ) -> dict:
+    source_aas: list[str] | None = None,
+    sig_only: bool = False,
+    fdr_threshold: float = 0.05,
+    show_reference: bool = True,
+) -> dict:
+    """
+    [Dataset-agnostic]
+    End-to-end codon usage analysis. Returns dict with codon_counts and
+    test_results so you can call the plot multiple times with different
+    AA selections without recomputing.
+    """
     codon_counts = compute_codon_counts(region_by_id)
-    test_results = test_codon_usage_pos_vs_neg(codon_counts)  # ← original
-    plot_codon_usage(codon_counts, test_results, dataset=dataset, save=save)
-    # ... rest stays the same
+    test_results = test_codon_usage_pos_vs_neg(codon_counts)
+
+    # plot_codon_usage(
+    #     codon_counts, test_results,
+    #     dataset=dataset, save=save,
+    #     source_aas=source_aas, sig_only=sig_only,
+    #     fdr_threshold=fdr_threshold,
+    #     show_reference=show_reference,
+    # )
+
+    return {"codon_counts": codon_counts, "test_results": test_results}

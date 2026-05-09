@@ -862,3 +862,208 @@ def run_position_level_analysis(
         "within_motif_comp_df": comp_df,
         "within_motif_results": within_results,
     }
+
+
+# Add to src/analysis_visualization/homolog_entropy.py
+# (or any module you prefer — it's self-contained)
+def compute_whole_protein_entropy(
+    df: pd.DataFrame,
+    qseq_col: str = "qseq",
+    hseq_col: str = "hseq",
+    group_col: str = "group",
+    protein_col: str = "UniqueID",
+    hit_id_col: str = "hit_accession",
+    query_len_col: str = "query_len",
+    species_col: str = "species",
+    min_homologs_per_position: int = 10,
+    exclude_human_self_hits: bool = True,
+    include_query_in_alignment: bool = True,
+) -> pd.DataFrame:
+    """
+    [Homolog-specific]
+    Per-query-position entropy, averaged across all query positions that meet
+    the per-position min homologs threshold. Handles variable-length
+    alignments (gaps in qseq from homolog-specific insertions).
+
+    For each query position:
+      - Collect all (qseq, hseq) pairs where the qseq position maps to a
+        non-gap character
+      - Take the aligned hseq character at the corresponding column
+      - If include_query_in_alignment: prepend the query's own AA at that position
+      - Skip positions covered by fewer than min_homologs_per_position hits
+
+    Returns per-protein aggregates.
+    """
+    # Dedupe to one alignment per (protein, homolog hit)
+    dedup = df.drop_duplicates(subset=[protein_col, hit_id_col], keep="first")
+
+    if exclude_human_self_hits:
+        n_before = len(dedup)
+        dedup = dedup[dedup[species_col] != "Homo sapiens"]
+        print(f"  Excluded {n_before - len(dedup):,} Homo sapiens self-hits "
+              f"({n_before} → {len(dedup)} alignments)")
+
+    records = []
+    skipped_low_n = 0
+
+    for protein_id, sub in dedup.groupby(protein_col):
+        group = sub[group_col].iloc[0]
+        query_len = int(sub[query_len_col].iloc[0])
+
+        if query_len == 0:
+            continue
+
+        # Collect per-position hseq characters
+        # positions_data[p] = list of hseq chars from hits covering query position p
+        positions_data = {p: [] for p in range(query_len)}
+
+        # For the "include query" option, add the query AA at each position
+        # We get the query AA from the first hit's qseq (stripped of gaps)
+        query_aa_at_pos = None
+        if include_query_in_alignment:
+            # Find the shortest qseq in the dedup (most aggressive gap removal)
+            # and use it to extract the query protein sequence positions
+            for qseq, _ in zip(sub[qseq_col].iloc[:1], sub[hseq_col].iloc[:1]):
+                # Strip gaps from qseq to get the unaligned query protein
+                query_protein_str = qseq.replace("-", "")
+                if len(query_protein_str) == query_len:
+                    query_aa_at_pos = list(query_protein_str)
+                    break
+
+        # For each hit, walk through its aligned (qseq, hseq) pair
+        for qseq, hseq in zip(sub[qseq_col], sub[hseq_col]):
+            if not isinstance(qseq, str) or not isinstance(hseq, str):
+                continue
+            if len(qseq) != len(hseq):
+                continue
+            query_pos = -1  # 0-indexed; increments to 0 on first non-gap
+            for qc, hc in zip(qseq, hseq):
+                if qc == "-":
+                    continue  # insertion in homolog relative to query; skip
+                query_pos += 1
+                if query_pos >= query_len:
+                    break
+                positions_data[query_pos].append(hc)
+
+        # Compute per-position entropy (only positions with enough coverage)
+        from src.analysis_visualization.homolog_entropy import (
+            positional_entropy,
+        )
+        entropies = []
+        coverages = []
+        for p in range(query_len):
+            column = positions_data[p]
+            if include_query_in_alignment and query_aa_at_pos is not None:
+                column = [query_aa_at_pos[p]] + column
+            if len(column) < min_homologs_per_position:
+                continue
+            ent = positional_entropy([c for c in column], exclude_gaps=True)
+            # positional_entropy expects a list of equal-length strings;
+            # since we pass single characters, each "row" is length 1
+            # Workaround: compute entropy directly from column counts
+            non_gap = [c for c in column if c != "-"]
+            if not non_gap:
+                continue
+            from collections import Counter
+            counts = np.array(list(Counter(non_gap).values()), dtype=float)
+            probs = counts / counts.sum()
+            h = -np.sum(probs * np.log2(probs))
+            entropies.append(h)
+            coverages.append(len(column))
+
+        if len(entropies) < 20:  # at least some minimum coverage to report
+            skipped_low_n += 1
+            continue
+
+        entropies = np.array(entropies)
+        records.append({
+            "UniqueID": protein_id,
+            "group": group,
+            "protein_length": query_len,
+            "n_positions_covered": len(entropies),
+            "fraction_positions_covered": float(len(entropies) / query_len),
+            "mean_coverage_per_position": float(np.mean(coverages)),
+            "mean_entropy_whole_protein": float(np.mean(entropies)),
+            "median_entropy_whole_protein": float(np.median(entropies)),
+            "std_entropy_whole_protein": float(np.std(entropies)),
+            "fraction_invariant_whole_protein": float(np.mean(entropies == 0)),
+            "fraction_conserved_whole_protein": float(np.mean(entropies < 0.5)),
+        })
+
+    print(f"  Whole-protein entropy: {len(records)} proteins analyzed "
+          f"(skipped {skipped_low_n} for insufficient coverage)")
+    return pd.DataFrame(records)
+
+# Replace plot_whole_protein_entropy in src/analysis_visualization/homolog_entropy.py
+
+def plot_whole_protein_entropy(
+    protein_entropy_df: pd.DataFrame,
+    dataset: str = "homologs",
+    save: bool = True,
+) -> dict:
+    """
+    Plot whole-protein mean entropy distributions, pos vs neg.
+    """
+    from scipy.stats import mannwhitneyu
+
+    pos = protein_entropy_df[protein_entropy_df["group"] == "pos"]
+    neg = protein_entropy_df[protein_entropy_df["group"] == "neg"]
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
+
+    # Panel 1: mean entropy
+    pos_vals_mean = pos["mean_entropy_whole_protein"].dropna()
+    neg_vals_mean = neg["mean_entropy_whole_protein"].dropna()
+
+    u, p_mean = mannwhitneyu(pos_vals_mean, neg_vals_mean, alternative="two-sided")
+    sig_mean = significance_stars(p_mean)
+
+    _box_strip_panel(
+        axes[0],
+        pos_vals_mean, neg_vals_mean,
+        ylabel="Mean entropy per protein",
+        title="Whole-protein conservation",
+        p_fdr=p_mean, sig=sig_mean,
+    )
+
+    # Panel 2: fraction conserved
+    pos_vals_frac = pos["fraction_conserved_whole_protein"].dropna()
+    neg_vals_frac = neg["fraction_conserved_whole_protein"].dropna()
+
+    u, p_frac = mannwhitneyu(pos_vals_frac, neg_vals_frac, alternative="two-sided")
+    sig_frac = significance_stars(p_frac)
+
+    _box_strip_panel(
+        axes[1],
+        pos_vals_frac, neg_vals_frac,
+        ylabel="Fraction of positions with H < 0.5",
+        title="Fraction of conserved positions per protein",
+        p_fdr=p_frac, sig=sig_frac,
+    )
+
+    fig.suptitle(
+        f"Whole-protein conservation ({dataset})",
+        fontsize=11, y=1.01,
+    )
+    plt.tight_layout()
+
+    if save:
+        save_figure(fig, "homolog_whole_protein_entropy", dataset=dataset)
+
+    # Summary
+    print(f"\n── Whole-protein conservation ({dataset}) ──")
+    print(f"  Proteins: pos = {len(pos_vals_mean)}, neg = {len(neg_vals_mean)}")
+    print(f"\n  Mean entropy per protein:")
+    print(f"    pos median = {pos_vals_mean.median():.3f}")
+    print(f"    neg median = {neg_vals_mean.median():.3f}")
+    print(f"    Mann-Whitney p = {p_mean:.2e} {sig_mean}")
+    print(f"\n  Fraction conserved (H < 0.5) per protein:")
+    print(f"    pos median = {pos_vals_frac.median():.3f}")
+    print(f"    neg median = {neg_vals_frac.median():.3f}")
+    print(f"    Mann-Whitney p = {p_frac:.2e} {sig_frac}")
+
+    return {
+        "mean_entropy_test": {"p": float(p_mean), "sig": sig_mean},
+        "fraction_conserved_test": {"p": float(p_frac), "sig": sig_frac},
+    }
+

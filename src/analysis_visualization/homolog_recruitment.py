@@ -646,3 +646,149 @@ def plot_substitution_stacked_fade(
         "fracs_binary": fracs_binary,
         "fracs_detailed": fracs_detailed,
     }
+
+"""
+Add to src/analysis_visualization/homolog_recruitment.py.
+
+Two preprocessing functions to remove BLAST-database artifacts:
+
+1. deduplicate_isoforms(): collapses multiple isoform hits from the same
+   species at the same motif to one representative row per (motif, species).
+   This addresses the issue where well-annotated species (especially
+   primates) have many alternative-splicing isoforms in RefSeq/nr that
+   produce redundant BLAST hits with identical or near-identical
+   sequences over the RG region.
+
+2. filter_homolog_artifacts(): excludes Homo sapiens hits, which after
+   isoform deduplication still represent the query gene matching itself
+   in the database — zero evolutionary information.
+"""
+
+def deduplicate_isoforms(
+    df: pd.DataFrame,
+    motif_cols: list = None,
+    species_col: str = "species",
+    keep: str = "longest_alignment",
+    align_len_col: str = "align_len",
+    identity_col: str = "identity",
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """
+    [Homolog-specific]
+    Collapse multiple isoform hits from the same species at the same motif
+    to a single representative row.
+
+    For well-studied genes (especially LLPS proteins like FUS, EWS, hnRNPs),
+    NCBI RefSeq annotates many alternative-splicing isoforms. When BLAST-P
+    queries these against `nr`, each isoform is returned as a separate hit
+    even though they represent the same gene from the same species.
+    These rows inflate apparent conservation metrics and asymmetrically
+    affect well-studied vs less-studied genes.
+
+    This function keeps one row per (motif, species) pair.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Homolog dataframe with at least the motif identifier columns and
+        the species column.
+    motif_cols : list, default ["UniqueID", "orig_motif_index"]
+        Columns that together identify a unique motif.
+    species_col : str, default "species"
+        Column containing species name.
+    keep : {"first", "longest_alignment", "highest_identity"}
+        Strategy for choosing which isoform to keep when duplicates exist:
+          - "first": keep the first-occurring row (fastest, arbitrary)
+          - "longest_alignment": keep the row with the largest align_len
+            value (typically the most informative isoform)
+          - "highest_identity": keep the row with the highest identity score
+
+    Returns
+    -------
+    pd.DataFrame
+        Deduplicated dataframe with one row per (motif, species) pair.
+    """
+    if motif_cols is None:
+        motif_cols = ["UniqueID", "orig_motif_index"]
+
+    n_before = len(df)
+    dedup_keys = motif_cols + [species_col]
+
+    if keep == "first":
+        df_dedup = df.drop_duplicates(subset=dedup_keys, keep="first")
+    elif keep == "longest_alignment":
+        df_dedup = (
+            df.sort_values(align_len_col, ascending=False)
+            .drop_duplicates(subset=dedup_keys, keep="first")
+            .sort_index()
+        )
+    elif keep == "highest_identity":
+        df_dedup = (
+            df.sort_values(identity_col, ascending=False)
+            .drop_duplicates(subset=dedup_keys, keep="first")
+            .sort_index()
+        )
+    else:
+        raise ValueError(
+            f"Unknown keep strategy: {keep!r}. "
+            f"Choose 'first', 'longest_alignment', or 'highest_identity'."
+        )
+
+    n_after = len(df_dedup)
+    n_removed = n_before - n_after
+
+    if verbose:
+        print(f"  Isoform deduplication (keep={keep!r}):")
+        print(f"    {n_before:,} → {n_after:,} rows "
+              f"({n_removed:,} removed, {100*n_removed/n_before:.1f}%)")
+        # Quick sanity check
+        n_pairs = df_dedup.groupby(dedup_keys).size().max()
+        print(f"    Max hits per (motif, species) after dedup: {n_pairs} "
+              f"(should be 1)")
+
+    return df_dedup.copy()
+
+
+def filter_homolog_artifacts(
+    df: pd.DataFrame,
+    species_col: str = "species",
+    exclude_species: list = None,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """
+    [Homolog-specific]
+    Remove biologically-artifactual rows from the homolog dataframe.
+
+    By default removes Homo sapiens rows. After isoform deduplication
+    these are still the query gene matching itself in the database
+    (under different RefSeq IDs), providing no cross-species evolutionary
+    information.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Homolog dataframe.
+    species_col : str, default "species"
+        Column containing species name.
+    exclude_species : list of str, optional
+        Species names to exclude. Defaults to ["Homo sapiens"].
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered dataframe.
+    """
+    if exclude_species is None:
+        exclude_species = ["Homo sapiens"]
+
+    n_before = len(df)
+    df_filtered = df[~df[species_col].isin(exclude_species)].copy()
+    n_excluded = n_before - len(df_filtered)
+
+    if verbose:
+        print(f"  Filtered species {exclude_species}:")
+        print(f"    {n_before:,} → {len(df_filtered):,} rows "
+              f"({n_excluded:,} removed, "
+              f"{100*n_excluded/n_before if n_before > 0 else 0:.1f}%)")
+
+    return df_filtered

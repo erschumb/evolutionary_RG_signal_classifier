@@ -388,6 +388,42 @@ def compute_wt_physchem_features(region_by_id: dict) -> pd.DataFrame:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# ESM1b LLR aggregations
+# ════════════════════════════════════════════════════════════════════════════
+
+def compute_esm_per_region(
+    df: pd.DataFrame,
+    llr_threshold: float = -7.5,
+) -> pd.DataFrame:
+    """
+    Multi-statistic ESM1b LLR aggregation per region.
+
+    Parameters
+    ----------
+    df
+        Variant dataframe with `esm_llr` column (output of annotate_variants_with_esm).
+    llr_threshold
+        LLR cutoff below which a variant is considered "disruptive" for the
+        fraction_disruptive feature. Default -7.5 follows Brandes et al. 2023.
+    """
+    sub = df[
+        df["Consequence"].fillna("").str.contains("missense_variant") &
+        df["esm_llr"].notna()
+    ]
+
+    def _agg(g):
+        return pd.Series({
+            "esm_mean":   g["esm_llr"].mean(),
+            "esm_median": g["esm_llr"].median(),
+            "esm_min":    g["esm_llr"].min(),
+            "esm_std":    g["esm_llr"].std(ddof=0),
+            "esm_fraction_disruptive": (g["esm_llr"] < llr_threshold).mean(),
+            "esm_n_annotated": len(g),
+        })
+
+    return sub.groupby(["region_id", "group"]).apply(_agg).reset_index()
+
+# ════════════════════════════════════════════════════════════════════════════
 # MAIN: build the full feature dataframe
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -396,6 +432,7 @@ def build_classifier_features(
     df_events: pd.DataFrame,
     region_by_id: dict,
     physchem_deltas_df: pd.DataFrame | None = None,
+    df_esm: pd.DataFrame | None = None,           # ← new
     dataset: str = "gnomad",
 ) -> pd.DataFrame:
     """
@@ -425,18 +462,26 @@ def build_classifier_features(
     print(f"Building classifier features for dataset: {dataset}")
 
     # Start with consequence features (includes region_length, variant_density)
-    print("  1/8 consequence + variant density...")
+    print("  1/9 consequence + variant density...")
     cons_df = compute_consequence_per_region(df_rg)
     # Keep per-consequence counts + densities + fractions, drop raw consequence class column
     features = cons_df.copy()
 
     # AlphaMissense
-    print("  2/8 AlphaMissense...")
+    print("  2/9 AlphaMissense...")
     am_df = compute_alphamissense_per_region(df_rg)
     features = features.merge(am_df, on=["region_id", "group"], how="left")
 
+    # ESM1b LLR
+    if df_esm is not None:
+        print("  3/9 ESM1b LLR...")
+        esm_df = compute_esm_per_region(df_esm)
+        features = features.merge(esm_df, on=["region_id", "group"], how="left")
+    else:
+        print("  3/9 ESM1b LLR SKIPPED (no df_esm provided)")
+
     # RG density + burden
-    print("  3/8 RG density + burden...")
+    print("  4/9 RG density + burden...")
     rg_feats = compute_rg_features_per_region(df_rg, region_by_id)
     # Drop columns already in `features`
     dup = [c for c in rg_feats.columns if c in features.columns and c != "region_id"]
@@ -446,34 +491,34 @@ def build_classifier_features(
     )
 
     # RG event features
-    print("  4/8 RG change events...")
+    print("  5/9 RG change events...")
     rg_ev = compute_rg_event_features(df_events)
     features = features.merge(rg_ev, on=["region_id", "group"], how="left")
 
     # Delta RG ratio per region
-    print("  5/8 Δ RG ratio...")
+    print("  6/9 Δ RG ratio...")
     drg = compute_delta_rg_ratio_per_region(df_rg, region_by_id)
     features = features.merge(drg, on=["region_id", "group"], how="left")
 
     # Substitution class rates
-    print("  6/8 substitution class rates...")
+    print("  7/9 substitution class rates...")
     sub_feats = compute_substitution_class_features(df_rg, region_by_id)
     features = features.merge(sub_feats, on=["region_id", "group"], how="left")
 
     # Physchem deltas per region (if available) + WT physchem
     if physchem_deltas_df is not None:
-        print("  7/8 physchem deltas (per-region means)...")
+        print("  8/9 physchem deltas (per-region means)...")
         pc_mean = aggregate_per_region(physchem_deltas_df)
         features = features.merge(pc_mean, on=["region_id", "group"], how="left")
     else:
-        print("  7/8 physchem deltas SKIPPED (no physchem_deltas_df provided)")
+        print("  8/9 physchem deltas SKIPPED (no physchem_deltas_df provided)")
 
-    print("  7/8 WT physchem...")
+    print("  8/9 WT physchem...")
     wt_pc = compute_wt_physchem_features(region_by_id)
     features = features.merge(wt_pc, on=["region_id", "group"], how="left")
 
     # Codon usage
-    print("  8/8 codon usage...")
+    print("  9/9 codon usage...")
     codon_feats = compute_codon_usage_features(region_by_id)
     features = features.merge(codon_feats, on=["region_id", "group"], how="left")
 

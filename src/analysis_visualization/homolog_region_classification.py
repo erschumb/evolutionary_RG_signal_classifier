@@ -213,18 +213,28 @@ def classify_protein_regions(
 
 def extract_rg_motifs_per_protein(
     df_combined: pd.DataFrame,
+    use_window: bool = True,
 ) -> Dict[str, List[Tuple[int, int]]]:
     """
-    For each protein (UniqueID), collect all RG motif coordinates as
-    list of (motif_start, motif_end) tuples. Deduplicates by motif position.
+    For each protein (UniqueID), collect all RG region coordinates.
+    
+    use_window=True (default): use win_start_x and win_end_x — the full RG
+        window including flanks (~21 aa). This is what's been analyzed for
+        entropy throughout the project.
+    use_window=False: use motif_start and motif_end — the literal RG motif
+        coordinates only (often short, 5-15 aa).
     """
     out = {}
+    if use_window:
+        start_col, end_col = "win_start_x", "win_end_x"
+    else:
+        start_col, end_col = "motif_start", "motif_end"
+    
     for uid, sub in df_combined.groupby("UniqueID"):
-        # Dedupe on (motif_start, motif_end) — same motif can appear in many hits
-        motifs = sub[["motif_start", "motif_end"]].drop_duplicates()
+        regions = sub[[start_col, end_col]].drop_duplicates()
         out[uid] = [
-            (int(row.motif_start), int(row.motif_end))
-            for row in motifs.itertuples(index=False)
+            (int(getattr(row, start_col)), int(getattr(row, end_col)))
+            for row in regions.itertuples(index=False)
         ]
     return out
 
@@ -250,21 +260,16 @@ def build_region_classification_table(
     min_length: int = 20,
     cache_path: Optional[str] = None,
     verbose: bool = True,
+    use_window_for_rg: bool = True,
 ) -> Tuple[pd.DataFrame, Dict]:
     """
-    End-to-end pipeline:
-      1. Extract unique UniProt IDs from df_combined
-      2. Fetch MobiDB-lite disorder regions (or load from cache)
-      3. For each protein, classify residues and merge into regions
-      4. Concatenate into one DataFrame
-
-    cache_path: if provided, saves/loads the fetched MobiDB dict to/from JSON.
+    End-to-end pipeline. min_length applies to mIDR/oIDR/structured but NOT
+    to RG regions (they're inherently variable, often shorter).
     """
     uniprot_ids = sorted(df_combined["UniqueID"].unique().tolist())
     if verbose:
         print(f"Unique proteins: {len(uniprot_ids)}")
 
-    # Fetch or load disorder annotations
     mobidb_data = None
     if cache_path is not None:
         try:
@@ -285,47 +290,67 @@ def build_region_classification_table(
             if verbose:
                 print(f"Saved MobiDB cache to {cache_path}")
 
-    # Normalize keys (cache json turns tuple keys into strings)
     mobidb_clean = {}
     for uid, regs in mobidb_data.items():
-        if regs is None:
-            mobidb_clean[uid] = None
-        else:
-            mobidb_clean[uid] = [tuple(r) for r in regs]
+        mobidb_clean[uid] = None if regs is None else [tuple(r) for r in regs]
 
-    rg_motifs_by_protein = extract_rg_motifs_per_protein(df_combined)
+    rg_regions_by_protein = extract_rg_motifs_per_protein(
+        df_combined, use_window=use_window_for_rg,
+    )
     protein_lengths = extract_protein_lengths(df_combined)
 
-    # Classify each protein
     all_regions = []
     proteins_no_mobidb = 0
     for uid in uniprot_ids:
         if mobidb_clean.get(uid) is None:
             proteins_no_mobidb += 1
             continue
-        regs = classify_protein_regions(
-            uniprot_id=uid,
+
+        # Get full classification, then split into "RG_motif" vs others
+        classification = _build_residue_classification(
             protein_length=protein_lengths[uid],
             disorder_regions=mobidb_clean[uid],
-            rg_motifs=rg_motifs_by_protein.get(uid, []),
-            min_length=min_length,
+            rg_motifs=rg_regions_by_protein.get(uid, []),
         )
-        all_regions.append(regs)
+
+        # Merge for non-RG classes with min_length filter
+        merged_non_rg = _merge_contiguous(classification, min_length=min_length)
+        # Now extract RG regions WITHOUT min_length (use original coords directly)
+        # Replace any RG_motif regions in merged_non_rg with the original 
+        # RG window coords (no length filtering)
+        non_rg = [r for r in merged_non_rg if r[2] != "RG_motif"]
+        rg_full = [(s, e, "RG_motif") for s, e in rg_regions_by_protein[uid]]
+
+        all_for_protein = non_rg + rg_full
+        df = pd.DataFrame(all_for_protein,
+                          columns=["region_start", "region_end", "region_class"])
+        df["UniqueID"] = uid
+        df["region_length"] = df["region_end"] - df["region_start"] + 1
+        all_regions.append(
+            df[["UniqueID", "region_start", "region_end",
+                "region_length", "region_class"]]
+        )
 
     if not all_regions:
-        raise ValueError("No proteins classified. MobiDB fetch may have failed.")
+        raise ValueError("No proteins classified.")
 
     classification_df = pd.concat(all_regions, ignore_index=True)
+    
+    # Sort by protein and start position for readability
+    classification_df = classification_df.sort_values(
+        ["UniqueID", "region_start"]
+    ).reset_index(drop=True)
 
     if verbose:
         print(f"\nClassification summary:")
         print(f"  Proteins with MobiDB annotation: "
               f"{len(uniprot_ids) - proteins_no_mobidb}/{len(uniprot_ids)}")
         print(f"  Proteins with no MobiDB data: {proteins_no_mobidb}")
-        print(f"  Total regions (≥{min_length} aa): {len(classification_df):,}")
+        print(f"  Total regions: {len(classification_df):,}")
         print(f"\n  Region count by class:")
         print(classification_df["region_class"].value_counts().to_string())
-        print(f"\n  Total residues by class:")
-        print(classification_df.groupby("region_class")["region_length"].sum().to_string())
+        print(f"\n  RG_motif region length distribution:")
+        rg = classification_df[classification_df["region_class"] == "RG_motif"]
+        print(rg["region_length"].describe().to_string())
 
     return classification_df, mobidb_clean
