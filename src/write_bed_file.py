@@ -56,6 +56,61 @@ def write_merged_bed(
     print(f"Wrote {len(rows)} intervals to {output_path}")
     print(f"  pos: {n_pos}, neg: {n_neg}")
 
+def write_multigroup_bed(
+    results_by_group: dict[str, list[dict]],
+    output_path: str,
+    skip_alt_contigs: bool = True,
+) -> None:
+    """
+    Write a merged BED file from multiple group genomic coordinate results.
+    ...
+    """
+    rows = []
+    n_alt_skipped = 0
+    for group, results in results_by_group.items():
+        for region in results:
+            rid = region["region_id"]
+            for iv in region["intervals"]:
+                chrom = iv["chrom"]
+                # Skip alt contigs (no gnomAD variants on these anyway)
+                if skip_alt_contigs and (
+                    str(chrom).startswith("HSCHR") or 
+                    "HSCHR" in str(chrom) or
+                    "_alt" in str(chrom).lower() or
+                    str(chrom).startswith("chrUn") or
+                    "random" in str(chrom).lower()
+                ):
+                    n_alt_skipped += 1
+                    continue
+                rows.append((chrom, iv["start"], iv["end"], rid, group))
+
+    # Natural chromosome sort: chr1, chr2, ... chr10, ... chrX, chrY
+    def chrom_sort_key(row):
+        chrom = row[0].replace("chr", "")
+        if chrom == "X":
+            return (23, row[1])
+        if chrom == "Y":
+            return (24, row[1])
+        if chrom == "M" or chrom == "MT":
+            return (25, row[1])
+        try:
+            return (int(chrom), row[1])
+        except ValueError:
+            return (99, row[1])
+
+    rows.sort(key=chrom_sort_key)
+
+    with open(output_path, "w") as f:
+        for chrom, start, end, rid, group in rows:
+            f.write(f"{chrom}\t{start}\t{end}\t{rid}\t{group}\n")
+
+    print(f"Wrote {len(rows)} intervals to {output_path}")
+    if n_alt_skipped > 0:
+        print(f"  Skipped {n_alt_skipped} intervals on alt/unplaced contigs")
+    for group in results_by_group.keys():
+        n_group = sum(1 for r in rows if r[4] == group)
+        print(f"  group {group}: {n_group}")
+
 def write_bed_from_results(results, output_file):
     with open(output_file, "w") as f:
         for res in results:

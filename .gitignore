@@ -3,10 +3,17 @@ __pycache__/
 *.pyc
 *.gz
 *.zip
+*.xlsx
 .env
 .vscode/
+
+data/alphamissense/am_filtered_for_4groups_inference.parquet
+data/bcftools/combined_vep_variants_4groups.tsv
 
 notes/
 _archived/
 figures/
+esm1b/
+refs/
 data/bcftools/combined_vep_variants.tsv
+data/bcftools/combined_vep_variants_4groups.tsv

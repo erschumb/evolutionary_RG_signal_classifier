@@ -462,26 +462,26 @@ def build_classifier_features(
     print(f"Building classifier features for dataset: {dataset}")
 
     # Start with consequence features (includes region_length, variant_density)
-    print("  1/9 consequence + variant density...")
+    print("  1/8 consequence + variant density...")
     cons_df = compute_consequence_per_region(df_rg)
     # Keep per-consequence counts + densities + fractions, drop raw consequence class column
     features = cons_df.copy()
 
     # AlphaMissense
-    print("  2/9 AlphaMissense...")
+    print("  2/8 AlphaMissense...")
     am_df = compute_alphamissense_per_region(df_rg)
     features = features.merge(am_df, on=["region_id", "group"], how="left")
 
-    # ESM1b LLR
-    if df_esm is not None:
-        print("  3/9 ESM1b LLR...")
-        esm_df = compute_esm_per_region(df_esm)
-        features = features.merge(esm_df, on=["region_id", "group"], how="left")
-    else:
-        print("  3/9 ESM1b LLR SKIPPED (no df_esm provided)")
+    # # ESM1b LLR
+    # if df_esm is not None:
+    #     print("  3/9 ESM1b LLR...")
+    #     esm_df = compute_esm_per_region(df_esm)
+    #     features = features.merge(esm_df, on=["region_id", "group"], how="left")
+    # else:
+    #     print("  3/9 ESM1b LLR SKIPPED (no df_esm provided)")
 
     # RG density + burden
-    print("  4/9 RG density + burden...")
+    print("  3/8 RG density + burden...")
     rg_feats = compute_rg_features_per_region(df_rg, region_by_id)
     # Drop columns already in `features`
     dup = [c for c in rg_feats.columns if c in features.columns and c != "region_id"]
@@ -491,34 +491,34 @@ def build_classifier_features(
     )
 
     # RG event features
-    print("  5/9 RG change events...")
+    print("  4/8 RG change events...")
     rg_ev = compute_rg_event_features(df_events)
     features = features.merge(rg_ev, on=["region_id", "group"], how="left")
 
     # Delta RG ratio per region
-    print("  6/9 Δ RG ratio...")
+    print("  5/8 Δ RG ratio...")
     drg = compute_delta_rg_ratio_per_region(df_rg, region_by_id)
     features = features.merge(drg, on=["region_id", "group"], how="left")
 
     # Substitution class rates
-    print("  7/9 substitution class rates...")
+    print("  6/8 substitution class rates...")
     sub_feats = compute_substitution_class_features(df_rg, region_by_id)
     features = features.merge(sub_feats, on=["region_id", "group"], how="left")
 
     # Physchem deltas per region (if available) + WT physchem
     if physchem_deltas_df is not None:
-        print("  8/9 physchem deltas (per-region means)...")
+        print("  7/8 physchem deltas (per-region means)...")
         pc_mean = aggregate_per_region(physchem_deltas_df)
         features = features.merge(pc_mean, on=["region_id", "group"], how="left")
     else:
-        print("  8/9 physchem deltas SKIPPED (no physchem_deltas_df provided)")
+        print("  7/8 physchem deltas SKIPPED (no physchem_deltas_df provided)")
 
-    print("  8/9 WT physchem...")
+    print("  7/8 WT physchem...")
     wt_pc = compute_wt_physchem_features(region_by_id)
     features = features.merge(wt_pc, on=["region_id", "group"], how="left")
 
     # Codon usage
-    print("  9/9 codon usage...")
+    print("  8/8 codon usage...")
     codon_feats = compute_codon_usage_features(region_by_id)
     features = features.merge(codon_feats, on=["region_id", "group"], how="left")
 
