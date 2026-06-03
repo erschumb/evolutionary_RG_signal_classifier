@@ -45,6 +45,7 @@ _RC_PARAMS = {
 # ── Figure sizes (inches) ───────────────────────────────────────────────────
 # Nature/Science typical widths: single-col ≈ 89 mm, double-col ≈ 183 mm
 FIGSIZE_SINGLE = (3.5, 2.8)   # single-column
+FIGSIZE_SLIM = (2.8, 2.8)   # single-column
 FIGSIZE_DOUBLE = (7.2, 2.8)   # double-column
 FIGSIZE_LARGE  = (7.2, 5.0)   # large panel
 

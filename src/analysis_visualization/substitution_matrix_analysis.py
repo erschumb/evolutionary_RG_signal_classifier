@@ -30,6 +30,9 @@ import matplotlib.patches as patches
 import seaborn as sns
 from scipy.stats import fisher_exact
 from statsmodels.stats.multitest import multipletests
+from matplotlib.colors import TwoSlopeNorm
+from scipy.stats import binomtest
+from matplotlib.colors import LogNorm
 
 from src.analysis_visualization.plot_config import (
     GROUP_COLORS, save_figure, significance_stars,
@@ -629,25 +632,26 @@ def plot_af_comparison_matrices(
 # ════════════════════════════════════════════════════════════════════════════
 # Build the expected substitution matrix per group (composition baseline)
 # ════════════════════════════════════════════════════════════════════════════
- 
+
 def compute_expected_substitution_counts(
     region_by_id: dict,
     group_label: str,
     observed_total: int,
+    rates: dict | None = None,      # <-- NEW
+    cpg_filter: str = "all",      # "all" | "cpg" | "noncpg"   <-- NEW
 ) -> pd.DataFrame:
     """
-    [Dataset-agnostic]
-    Aggregate all possible single-nucleotide missense substitutions across
-    regions in the given group. Scale the resulting matrix to match the
-    observed total missense count.
- 
-    Returns a 20×20 DataFrame of expected counts per substitution (AA_from × AA_to).
+    Aggregate possible single-nt missense substitutions across a group's regions,
+    scaled to the observed total.
+
+    rates=None      -> each possible substitution weighted +1 (composition null)
+    rates=<dict>    -> each weighted by its trinucleotide mutation rate
+                       (mutability null; the CpG-aware correction)
     """
-    matrix = pd.DataFrame(
-        0.0, index=ORDERED_AA, columns=ORDERED_AA,
-    )
-    total_possible = 0
- 
+    matrix = pd.DataFrame(0.0, index=ORDERED_AA, columns=ORDERED_AA)
+    total_possible = 0.0
+    n_skipped_edge = 0
+
     for rid, region in region_by_id.items():
         if region.get("group") != group_label:
             continue
@@ -658,28 +662,65 @@ def compute_expected_substitution_counts(
         enum_df = enumerate_single_nt_substitutions(dna, prot)
         missense_only = enum_df[enum_df["consequence"] == "missense"]
         for row in missense_only.itertuples(index=False):
-            if row.aa_from in ORDERED_AA and row.aa_to in ORDERED_AA:
-                matrix.loc[row.aa_from, row.aa_to] += 1
-                total_possible += 1
- 
-    # Scale to match observed total
+            if row.aa_from not in ORDERED_AA or row.aa_to not in ORDERED_AA:
+                continue
+            # --- CpG stratification ---
+            if cpg_filter != "all":
+                is_cpg = is_cpg_transition(row.context, row.alt_base)
+                if cpg_filter == "cpg" and not is_cpg:
+                    continue
+                if cpg_filter == "noncpg" and is_cpg:
+                    continue
+            # --- existing rate weighting ---
+            if rates is None:
+                w = 1.0
+            else:
+                if row.context is None:
+                    continue
+                w = rates.get((row.context, row.alt_base))
+                if w is None:
+                    continue
+            matrix.loc[row.aa_from, row.aa_to] += w
+            total_possible += w
+
+    if rates is not None and n_skipped_edge:
+        # 2 positions per region lose context; negligible but worth tracking
+        pass
     if total_possible == 0:
         return matrix
-    scale = observed_total / total_possible
-    return matrix * scale
- 
- 
+    return matrix * (observed_total / total_possible)
+
 # ════════════════════════════════════════════════════════════════════════════
 # Build observed-vs-expected enrichment ratios per group
 # ════════════════════════════════════════════════════════════════════════════
- 
+
+
+
+def binom_oe_test(obs_pos, obs_neg, exp_pos, exp_neg):
+    """
+    Conditional binomial test of whether a cell's observed pos/neg split matches
+    its mutational-opportunity split. Null p0 = exp_pos/(exp_pos+exp_neg), where
+    exp_* are the (rate-weighted, group-total-scaled) expected counts.
+    Tests the SAME quantity the obs/exp effect size shows, unlike the raw-count
+    Fisher test it replaces.
+    """
+    if exp_pos <= 0 or exp_neg <= 0:
+        return np.nan
+    T = int(round(obs_pos + obs_neg))
+    if T == 0:
+        return np.nan
+    p0 = min(max(exp_pos / (exp_pos + exp_neg), 1e-12), 1 - 1e-12)
+    return binomtest(int(round(obs_pos)), T, p0).pvalue
+
 def compute_composition_normalized_enrichment(
     df: pd.DataFrame,
     region_by_id: dict,
     min_total: int = 5,
+    rates: dict | None = None,
     group_col: str = "group",
     pos_label: str = "pos",
     neg_label: str = "neg",
+    cpg_filter: str = "all",      # "all" | "cpg" | "noncpg"
 ) -> dict:
     """
     [Dataset-agnostic]
@@ -694,18 +735,20 @@ def compute_composition_normalized_enrichment(
         pval, fdr                — Fisher p-values and BH-FDR, per cell
         n_tested
     """
+    if cpg_filter == "cpg":
+        df = df[df["cpg"]]
+    elif cpg_filter == "noncpg":
+        df = df[~df["cpg"]]
     df_pos = df[df[group_col] == pos_label]
     df_neg = df[df[group_col] == neg_label]
  
     obs_pos = compute_substitution_counts(df_pos)
     obs_neg = compute_substitution_counts(df_neg)
  
-    exp_pos = compute_expected_substitution_counts(
-        region_by_id, pos_label, observed_total=int(obs_pos.values.sum())
-    )
-    exp_neg = compute_expected_substitution_counts(
-        region_by_id, neg_label, observed_total=int(obs_neg.values.sum())
-    )
+    exp_pos = compute_expected_substitution_counts(region_by_id, pos_label,
+            observed_total=int(obs_pos.values.sum()), rates=rates, cpg_filter=cpg_filter)
+    exp_neg = compute_expected_substitution_counts(region_by_id, neg_label,
+            observed_total=int(obs_neg.values.sum()), rates=rates, cpg_filter=cpg_filter)
  
     # Enrichment ratios
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -734,13 +777,21 @@ def compute_composition_normalized_enrichment(
             if pos_c + neg_c < min_total:
                 continue
  
-            # Fisher p-value from raw observed counts (same as before)
-            pos_total_row = int(obs_pos.loc[aa_from].sum())
-            neg_total_row = int(obs_neg.loc[aa_from].sum())
-            pos_out = pos_total_row - pos_c
-            neg_out = neg_total_row - neg_c
-            _, p = fisher_exact([[pos_c, pos_out], [neg_c, neg_out]])
- 
+            # # Fisher p-value from raw observed counts (same as before)
+            # pos_total_row = int(obs_pos.loc[aa_from].sum())
+            # neg_total_row = int(obs_neg.loc[aa_from].sum())
+            # pos_out = pos_total_row - pos_c
+            # neg_out = neg_total_row - neg_c
+            # _, p = fisher_exact([[pos_c, pos_out], [neg_c, neg_out]])
+
+            # obs/exp binomial test: does the pos/neg split match opportunity?
+            p = binom_oe_test(
+                pos_c, neg_c,
+                exp_pos.loc[aa_from, aa_to], exp_neg.loc[aa_from, aa_to],
+            )
+            if pd.isna(p):
+                continue
+
             # Composition-normalized effect size
             rp = ratio_pos.loc[aa_from, aa_to]
             rn = ratio_neg.loc[aa_from, aa_to]
@@ -783,6 +834,8 @@ def plot_composition_normalized_matrix(
     save: bool = True,
     vmax_ratio: float | None = None,
     vmax_diff: float | None = None,
+    save_table: bool = False,                 # <-- ADD
+    table_path: str | None = None,            # <-- ADD (default derived from dataset)
     ) -> plt.Figure:
     """
     Three-panel heatmap:
@@ -879,35 +932,50 @@ def plot_composition_normalized_matrix(
         save_figure(fig, "substitution_matrix_composition_normalized",
                     dataset=dataset)
 
-    # ── Printed summary ────────────────────────────────────────────────────
-    n_sig = int((result["fdr"] < 0.05).sum().sum())
+    # ── Build the full results table (all tested cells) ─────────────────────
+    rows = []
+    for aa_from in ORDERED_AA:
+        for aa_to in ORDERED_AA:
+            if aa_from == aa_to:
+                continue
+            p = result["fdr"].loc[aa_from, aa_to]
+            if pd.isna(p):              # not tested (failed min_total / no opportunity)
+                continue
+            rows.append({
+                "from": aa_from, "to": aa_to,
+                "from_group": AA_GROUPS[aa_from], "to_group": AA_GROUPS[aa_to],
+                "log2_ratio_diff": result["log2_ratio_diff"].loc[aa_from, aa_to],
+                "pval": result["pval"].loc[aa_from, aa_to],
+                "fdr": p,
+                "significant": bool(p < 0.05),
+                "obs_pos": int(result["obs_pos"].loc[aa_from, aa_to]),
+                "obs_neg": int(result["obs_neg"].loc[aa_from, aa_to]),
+                "exp_pos": float(result["exp_pos"].loc[aa_from, aa_to]),
+                "exp_neg": float(result["exp_neg"].loc[aa_from, aa_to]),
+                "ratio_pos": float(result["ratio_pos"].loc[aa_from, aa_to]),
+                "ratio_neg": float(result["ratio_neg"].loc[aa_from, aa_to]),
+            })
+    table = pd.DataFrame(rows)
+    if not table.empty:
+        table = table.reindex(
+            table["log2_ratio_diff"].abs().sort_values(ascending=False).index
+        ).reset_index(drop=True)
+    # print(table)
+    print(f"  Save table: {save_table}")
+    print(f"  Table empty: {table.empty}")
+    # ── Optional CSV of ALL substitutions ───────────────────────────────────
+    if save_table and not table.empty:
+        path = table_path or f"substitution_matrix_composition_normalized_{dataset}.csv"
+        table.to_csv(path, index=False)
+        print(f"  Saved full substitution table ({len(table)} cells) -> {path}")
+
+    # ── Printed summary (top significant cells) ─────────────────────────────
+    n_sig = int(table["significant"].sum()) if not table.empty else 0
     print(f"\n── Composition-normalized substitution matrix ({dataset}) ──")
     print(f"  Cells tested: {result['n_tested']}")
     print(f"  Cells significant at FDR < 0.05: {n_sig}")
-
     if n_sig > 0:
-        sig_cells = []
-        for aa_from in ORDERED_AA:
-            for aa_to in ORDERED_AA:
-                if aa_from == aa_to:
-                    continue
-                p = result["fdr"].loc[aa_from, aa_to]
-                if pd.notna(p) and p < 0.05:
-                    sig_cells.append({
-                        "from": aa_from, "to": aa_to,
-                        "log2_ratio_diff": result["log2_ratio_diff"].loc[aa_from, aa_to],
-                        "fdr": p,
-                        "obs_pos": int(result["obs_pos"].loc[aa_from, aa_to]),
-                        "obs_neg": int(result["obs_neg"].loc[aa_from, aa_to]),
-                        "exp_pos": float(result["exp_pos"].loc[aa_from, aa_to]),
-                        "exp_neg": float(result["exp_neg"].loc[aa_from, aa_to]),
-                        "ratio_pos": float(result["ratio_pos"].loc[aa_from, aa_to]),
-                        "ratio_neg": float(result["ratio_neg"].loc[aa_from, aa_to]),
-                    })
-        sig_df = pd.DataFrame(sig_cells)
-        sig_df = sig_df.reindex(
-            sig_df["log2_ratio_diff"].abs().sort_values(ascending=False).index
-        )
+        sig_df = table[table["significant"]].drop(columns=["significant", "pval"])
         print("\n  Top composition-controlled group differences:")
         print(sig_df.head(15).to_string(index=False))
 
@@ -932,7 +1000,7 @@ def run_composition_normalized_analysis(
     result = compute_composition_normalized_enrichment(
         df, region_by_id, min_total=min_total,
     )
-    plot_composition_normalized_matrix(result, dataset=dataset, save=save)
+    plot_composition_normalized_matrix(result, dataset=dataset, save_table=save)
     return result
  
 
@@ -1667,13 +1735,18 @@ def run_marginal_substitution_analysis(
     fdr_threshold: float = 0.05,
     dataset: str = "gnomad",
     save: bool = True,
-    sig_only: bool = False,           # ← new
-    source_aas: list[str] | None = None,  # ← new: explicit AA selection
+    sig_only: bool = False,
+    source_aas: list[str] | None = None,
+    plot_kind: str = "distribution",  # 'distribution' | 'enrichment_heatmap' | 'enrichment_bars' | 'all'
 ) -> pd.DataFrame:
     """
-    [Dataset-agnostic]
-    End-to-end marginal substitution analysis: compute, plot, print summary.
-    Returns the result DataFrame for downstream use.
+    End-to-end marginal substitution analysis.
+
+    plot_kind:
+      'distribution'        – existing pos/neg side-by-side bars (default)
+      'enrichment_heatmap'  – log2(pos/neg) heatmap over (source × target)
+      'enrichment_bars'     – per-source-AA divergent bars
+      'all'                 – everything
     """
     result_df = compute_marginal_substitution_distributions(
         df, group_col=group_col, pos_label=pos_label, neg_label=neg_label,
@@ -1681,40 +1754,57 @@ def run_marginal_substitution_analysis(
         consequence_col=consequence_col, min_total=min_total,
     )
 
-
-
-    # ── Printed summary ───────────────────────────────────────────────────
     tested = result_df[result_df["tested"]].copy()
     sig = tested[tested["fdr"] < fdr_threshold].sort_values(
         "kl_symmetric", ascending=False
     )
-        # Determine which AAs to plot
+
     if source_aas is not None:
-        # Explicit selection overrides sig_only
         aas_to_plot = [aa for aa in source_aas if aa in result_df.index]
     elif sig_only:
-        aas_to_plot = sig.index.tolist()  # already sorted by KL
+        aas_to_plot = sig.index.tolist()
     else:
-        aas_to_plot = None  # plot_func will use all tested AAs
+        aas_to_plot = None
 
-    if sig_only or source_aas is not None:
-        plot_marginal_substitution_distributions_focused(
-            result_df,
-            source_aas=aas_to_plot,
-            dataset=dataset,
-            save=save,
-            fdr_threshold=fdr_threshold,
-        )
-    else:
-        plot_marginal_substitution_distributions(
-            result_df, dataset=dataset, save=save,
-            fdr_threshold=fdr_threshold,
+    # --- Distribution plots (existing behaviour) ---
+    if plot_kind in ("distribution", "all"):
+        if sig_only or source_aas is not None:
+            plot_marginal_substitution_distributions_focused(
+                result_df, source_aas=aas_to_plot,
+                dataset=dataset, save=save, fdr_threshold=fdr_threshold,
+            )
+        else:
+            plot_marginal_substitution_distributions(
+                result_df, dataset=dataset, save=save,
+                fdr_threshold=fdr_threshold,
+            )
+
+    # --- Enrichment plots (new) ---
+    if plot_kind in ("enrichment_heatmap", "enrichment_bars", "all"):
+        enrich_df = compute_substitution_enrichment(
+            df, group_col=group_col, pos_label=pos_label, neg_label=neg_label,
+            before_col=before_col, after_col=after_col,
+            consequence_col=consequence_col,
+            min_source_total=min_total,
         )
 
+        if plot_kind in ("enrichment_heatmap", "all"):
+            plot_substitution_enrichment_heatmap(
+                enrich_df, dataset=dataset, fdr_threshold=fdr_threshold,
+                save=save,
+            )
+
+        if plot_kind in ("enrichment_bars", "all"):
+            bars_aas = aas_to_plot if aas_to_plot else sorted(enrich_df["source"].unique())
+            plot_substitution_enrichment_bars(
+                enrich_df, source_aas=bars_aas, dataset=dataset,
+                fdr_threshold=fdr_threshold, save=save,
+            )
+
+    # ── Printed summary (unchanged) ──
     print(f"\n── Marginal substitution distributions ({dataset}) ──")
     print(f"  Source AAs tested (n ≥ {min_total}): {len(tested)}")
     print(f"  Significant at FDR < {fdr_threshold}: {len(sig)}")
-
     if len(sig) > 0:
         print("\n  Significant source AAs (ranked by KL divergence):")
         summary = sig[["n_pos", "n_neg", "chi2", "p_value", "fdr", "kl_symmetric"]].copy()
@@ -1870,117 +1960,6 @@ def plot_marginal_substitution_distributions_focused(
 
 # Map each AA to its group index in GROUP_ORDER for fast lookup
 _AA_TO_GROUP = {aa: grp for aa, grp in AA_GROUPS.items()}
-
-def compute_grouped_substitution_matrix(
-    df: pd.DataFrame,
-    group_col: str = "group",
-    pos_label: str = "pos",
-    neg_label: str = "neg",
-    before_col: str = "before_aa",
-    after_col: str = "after_aa",
-    consequence_col: str = "Consequence",
-) -> dict:
-    """
-    [Dataset-agnostic]
-    Pool raw missense counts into 6×6 physicochemical group bins,
-    then compute log2 OR and Fisher p-value per group-pair cell.
-
-    Critically: counts are pooled BEFORE any OR or p-value calculation
-    (Mantel-Haenszel-style), so the statistics are computed on the
-    full pooled contingency — not averaged from per-cell results.
-
-    Only SNP-reachable (aa_from, aa_to) pairs contribute to each bin.
-    Diagonal (same-group substitutions) is included but not tested.
-
-    Returns dict with:
-        counts_pos, counts_neg  — 6×6 DataFrames of pooled raw counts
-        freq_pos, freq_neg      — 6×6 row-normalized frequency matrices
-        log2_or                 — 6×6 log2 odds ratio (NaN if any zero)
-        pval, fdr               — Fisher p-value and BH-corrected FDR
-        n_tested                — off-diagonal cells tested
-    """
-    missense = df[
-        df[consequence_col].fillna("").str.contains("missense_variant") &
-        df[before_col].notna() & df[after_col].notna() &
-        df[before_col].isin(ORDERED_AA) & df[after_col].isin(ORDERED_AA)
-    ].copy()
-    # Restrict to SNP-reachable pairs only before pooling
-    missense = missense[
-        missense.apply(
-            lambda r: r[after_col] in SNP_REACHABLE.get(r[before_col], []),
-            axis=1,
-        )
-    ]
-    # Add group columns
-    missense["grp_from"] = missense[before_col].map(_AA_TO_GROUP)
-    missense["grp_to"]   = missense[after_col].map(_AA_TO_GROUP)
-
-    pos_df = missense[missense[group_col] == pos_label]
-    neg_df = missense[missense[group_col] == neg_label]
-
-    # Pool counts into 6×6
-    def _pool(sub):
-        counts = pd.DataFrame(0, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
-        for (gf, gt), grp in sub.groupby(["grp_from", "grp_to"]):
-            counts.loc[gf, gt] = len(grp)
-        return counts
-
-    counts_pos = _pool(pos_df)
-    counts_neg = _pool(neg_df)
-
-    # Row-normalize
-    def _row_norm(counts):
-        row_sums = counts.sum(axis=1).replace(0, np.nan)
-        return counts.div(row_sums, axis=0).fillna(0)
-
-    freq_pos = _row_norm(counts_pos)
-    freq_neg = _row_norm(counts_neg)
-
-    # Per-cell Fisher + log2 OR on pooled counts
-    log2_or = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
-    pval    = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
-    tested_cells = []
-
-    for gf in GROUP_ORDER[::-1]:
-        row_total_pos = counts_pos.loc[gf].sum()
-        row_total_neg = counts_neg.loc[gf].sum()
-        for gt in GROUP_ORDER:
-            if gf == gt:
-                continue  # skip diagonal
-            pos_c = int(counts_pos.loc[gf, gt])
-            neg_c = int(counts_neg.loc[gf, gt])
-            pos_out = row_total_pos - pos_c
-            neg_out = row_total_neg - neg_c
-
-            if 0 in (pos_c, pos_out, neg_c, neg_out):
-                _, p = fisher_exact([[pos_c, pos_out], [neg_c, neg_out]])
-                pval.loc[gf, gt] = p
-                tested_cells.append((gf, gt, p))
-                continue
-
-            odds, p = fisher_exact([[pos_c, pos_out], [neg_c, neg_out]])
-            log2_or.loc[gf, gt] = np.log2(odds)
-            pval.loc[gf, gt] = p
-            tested_cells.append((gf, gt, p))
-
-    # BH FDR over all 30 off-diagonal cells
-    fdr = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
-    if tested_cells:
-        raw_ps = [c[2] for c in tested_cells]
-        _, corrected, _, _ = multipletests(raw_ps, method="fdr_bh")
-        for (gf, gt, _), p_fdr in zip(tested_cells, corrected):
-            fdr.loc[gf, gt] = p_fdr
-
-    return {
-        "counts_pos": counts_pos,
-        "counts_neg": counts_neg,
-        "freq_pos":   freq_pos,
-        "freq_neg":   freq_neg,
-        "log2_or":    log2_or,
-        "pval":       pval,
-        "fdr":        fdr,
-        "n_tested":   len(tested_cells),
-    }
 
 
 def plot_grouped_substitution_matrix(
@@ -2178,7 +2157,32 @@ def plot_grouped_substitution_matrix(
     return fig
 
 
-def run_grouped_substitution_analysis(
+# def run_grouped_substitution_analysis(
+#     df: pd.DataFrame,
+#     group_col: str = "group",
+#     pos_label: str = "pos",
+#     neg_label: str = "neg",
+#     before_col: str = "before_aa",
+#     after_col: str = "after_aa",
+#     consequence_col: str = "Consequence",
+#     dataset: str = "gnomad",
+#     save: bool = True,
+#     **plot_kwargs,
+# ) -> dict:
+#     """[Dataset-agnostic] End-to-end grouped substitution analysis."""
+#     result = compute_grouped_substitution_matrix(
+#         df, group_col=group_col, pos_label=pos_label, neg_label=neg_label,
+#         before_col=before_col, after_col=after_col,
+#         consequence_col=consequence_col,
+#     )
+#     plot_grouped_substitution_matrix(result, dataset=dataset, save=save, **plot_kwargs)
+#     return result
+
+
+
+
+
+def compute_substitution_enrichment(
     df: pd.DataFrame,
     group_col: str = "group",
     pos_label: str = "pos",
@@ -2186,15 +2190,889 @@ def run_grouped_substitution_analysis(
     before_col: str = "before_aa",
     after_col: str = "after_aa",
     consequence_col: str = "Consequence",
+    pseudocount: float = 0.5,
+    min_source_total: int = 50,
+    restrict_to_snp_reachable: bool = True,
+) -> pd.DataFrame:
+    """
+    Compute per-(source, target) AA enrichment of pos vs neg substitutions.
+
+    For each source AA, conditions on substitutions from that AA, then computes:
+      - freq_pos, freq_neg : conditional P(target | source) in each group
+      - log2_enrichment    : log2((freq_pos + eps) / (freq_neg + eps))
+      - p_value            : Fisher exact on the 2x2 [(target, ~target) x (pos, neg)]
+      - fdr                : BH-corrected p (global across all tested cells)
+
+    Returns long-form DataFrame with one row per (source, target) cell tested.
+    """
+    # Filter to missense
+    mis = df[df[consequence_col].str.contains("missense", case=False, na=False)].copy()
+    mis = mis[mis[before_col].isin(ORDERED_AA) & mis[after_col].isin(ORDERED_AA)]
+
+    rows = []
+    for src in ORDERED_AA:
+        sub_pos = mis[(mis[group_col] == pos_label) & (mis[before_col] == src)]
+        sub_neg = mis[(mis[group_col] == neg_label) & (mis[before_col] == src)]
+        n_pos_total = len(sub_pos)
+        n_neg_total = len(sub_neg)
+
+        if n_pos_total + n_neg_total < min_source_total:
+            continue
+
+        # Optionally restrict targets to SNP-reachable ones
+        if restrict_to_snp_reachable:
+            try:
+                from src.analysis_visualization.substitution_matrix_analysis import SNP_REACHABLE
+                targets = [t for t in ORDERED_AA if t in SNP_REACHABLE.get(src, ORDERED_AA) and t != src]
+            except Exception:
+                targets = [t for t in ORDERED_AA if t != src]
+        else:
+            targets = [t for t in ORDERED_AA if t != src]
+
+        for tgt in targets:
+            k_pos = (sub_pos[after_col] == tgt).sum()
+            k_neg = (sub_neg[after_col] == tgt).sum()
+
+            # Conditional frequencies with pseudocount smoothing
+            f_pos = (k_pos + pseudocount) / (n_pos_total + pseudocount * len(targets))
+            f_neg = (k_neg + pseudocount) / (n_neg_total + pseudocount * len(targets))
+            log2e = np.log2(f_pos / f_neg)
+
+            # Fisher exact on contingency table
+            table = [[k_pos, n_pos_total - k_pos],
+                     [k_neg, n_neg_total - k_neg]]
+            try:
+                _, p = fisher_exact(table, alternative="two-sided")
+            except ValueError:
+                p = 1.0
+
+            rows.append({
+                "source": src, "target": tgt,
+                "k_pos": k_pos, "k_neg": k_neg,
+                "n_pos_total": n_pos_total, "n_neg_total": n_neg_total,
+                "freq_pos": f_pos, "freq_neg": f_neg,
+                "log2_enrichment": log2e,
+                "p_value": p,
+            })
+
+    out = pd.DataFrame(rows)
+    if len(out) > 0:
+        out["fdr"] = multipletests(out["p_value"], method="fdr_bh")[1]
+    return out
+
+
+def plot_substitution_enrichment_heatmap(
+    enrich_df: pd.DataFrame,
+    dataset: str = "gnomad",
+    fdr_threshold: float = 0.05,
+    vmax: float | None = None,
+    save: bool = False,
+    figsize: tuple = (11, 9),
+):
+    """
+    Heatmap of log2(pos/neg) enrichment per (source, target) AA cell.
+    Cells significant at FDR are marked with a dot; cells with NaN (not tested) are grey.
+    """
+    matrix = enrich_df.pivot(index="source", columns="target",
+                             values="log2_enrichment")
+    matrix = matrix.reindex(index=ORDERED_AA, columns=ORDERED_AA)
+
+    sig_matrix = enrich_df.pivot(index="source", columns="target", values="fdr")
+    sig_matrix = sig_matrix.reindex(index=ORDERED_AA, columns=ORDERED_AA)
+
+    # Symmetric colour range
+    if vmax is None:
+        vmax = np.nanpercentile(np.abs(matrix.values), 98)
+        vmax = max(vmax, 0.5)
+    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    cmap = plt.cm.RdBu_r.copy()
+    cmap.set_bad(color="#dddddd")
+
+    im = ax.imshow(matrix.values, cmap=cmap, norm=norm, aspect="equal")
+
+    # Significance markers
+    for i, src in enumerate(ORDERED_AA):
+        for j, tgt in enumerate(ORDERED_AA):
+            fdr = sig_matrix.loc[src, tgt]
+            if pd.notna(fdr) and fdr < fdr_threshold:
+                ax.plot(j, i, marker="o", color="black",
+                        markersize=3.5, markeredgewidth=0)
+
+    ax.set_xticks(range(len(ORDERED_AA)))
+    ax.set_yticks(range(len(ORDERED_AA)))
+    ax.set_xticklabels(ORDERED_AA)
+    ax.set_yticklabels(ORDERED_AA)
+    ax.set_xlabel("Target amino acid")
+    ax.set_ylabel("Source amino acid")
+    ax.set_title(
+        f"Substitution enrichment, pos vs neg ({dataset})\n"
+        f"log$_2$(freq$_{{pos}}$ / freq$_{{neg}}$); dots: FDR < {fdr_threshold}",
+        fontsize=11,
+    )
+
+    cbar = plt.colorbar(im, ax=ax, shrink=0.75, pad=0.02)
+    cbar.set_label("log$_2$ enrichment (pos / neg)")
+    # Anchor the green/red ends to your group colours via tick labels
+    cbar.ax.text(1.5, vmax, "  pos↑", va="center", ha="left",
+                 color=GROUP_COLORS.get("pos", "#4daf4a"), fontweight="bold", transform=cbar.ax.transData)
+    cbar.ax.text(1.5, -vmax, "  neg↑", va="center", ha="left",
+                 color=GROUP_COLORS.get("neg", "#e41a1c"), fontweight="bold", transform=cbar.ax.transData)
+
+    plt.tight_layout()
+    if save:
+        path = f"figures/substitution_enrichment_heatmap_{dataset}.pdf"
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        print(f"  Saved: {path}")
+    plt.show()
+    return fig
+
+
+def plot_substitution_enrichment_bars(
+    enrich_df: pd.DataFrame,
+    source_aas: list[str] | None = None,
+    dataset: str = "gnomad",
+    fdr_threshold: float = 0.05,
+    save: bool = False,
+    ncols: int = 4,
+):
+    """
+    Per-source-AA divergent bar chart: log2 enrichment per target AA.
+    Bars coloured by direction (pos-enriched green, neg-enriched red);
+    significant bars edged in black.
+    """
+    if source_aas is None:
+        source_aas = sorted(enrich_df["source"].unique())
+
+    n = len(source_aas)
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.2 * ncols, 2.4 * nrows),
+                             squeeze=False, sharex=False)
+
+    # Shared y-limit so panels are comparable
+    ymax = enrich_df["log2_enrichment"].abs().quantile(0.98)
+    ymax = max(ymax, 0.5)
+
+    for i, src in enumerate(source_aas):
+        ax = axes[i // ncols, i % ncols]
+        sub = enrich_df[enrich_df["source"] == src].copy()
+        sub = sub.sort_values("log2_enrichment")
+
+        colors = [GROUP_COLORS.get("pos", "#4daf4a") if v > 0 else GROUP_COLORS.get("neg", "#e41a1c") for v in sub["log2_enrichment"]]
+        edges = ["black" if f < fdr_threshold else "none" for f in sub["fdr"]]
+        lws = [1.2 if f < fdr_threshold else 0 for f in sub["fdr"]]
+
+        ax.barh(sub["target"], sub["log2_enrichment"],
+                color=colors, edgecolor=edges, linewidth=lws)
+        ax.axvline(0, color="black", linewidth=0.6)
+        ax.set_xlim(-ymax, ymax)
+        ax.set_title(f"{src} →", fontsize=10, loc="left")
+        ax.tick_params(labelsize=8)
+        if i % ncols == 0:
+            ax.set_ylabel("target AA", fontsize=9)
+        if i // ncols == nrows - 1:
+            ax.set_xlabel("log$_2$(pos/neg)", fontsize=9)
+
+    # Blank remaining axes
+    for j in range(n, nrows * ncols):
+        axes[j // ncols, j % ncols].axis("off")
+
+    fig.suptitle(
+        f"Per-source-AA substitution enrichment ({dataset}) — "
+        f"edged bars: FDR < {fdr_threshold}",
+        y=1.005, fontsize=11,
+    )
+    plt.tight_layout()
+    if save:
+        path = f"figures/substitution_enrichment_bars_{dataset}.pdf"
+        plt.savefig(path, dpi=300, bbox_inches="tight")
+        print(f"  Saved: {path}")
+    plt.show()
+    return fig
+
+def run_mutability_normalized_analysis(
+    df: pd.DataFrame,
+    region_by_id: dict,
+    rates_path: str = "/mnt/d/phd/scripts/16_ev_signature_predictor/data/samocha_mutation_rates/fordist_1KG_mutation_rate_table.txt",
+    min_total: int = 5,
+    dataset: str = "gnomad",
+    save: bool = True,
+    save_table_path: str = None
+) -> dict:
+    """
+    Observed vs MUTABILITY-EXPECTED substitution enrichment.
+    Same machinery as run_composition_normalized_analysis, but the null is
+    weighted by the Samocha trinucleotide rates (CpG-aware) instead of flat.
+    """
+    rates = load_mutation_rates(rates_path)
+    result = compute_composition_normalized_enrichment(
+        df, region_by_id, min_total=min_total, rates=rates,   # pass-through
+    )
+    plot_composition_normalized_matrix(result, dataset=f"{dataset}_mutability", save_table=save, table_path=save_table_path)
+    return result
+
+# ════════════════════════════════════════════════════════════════════════════
+# Mutation-rate loading (Samocha 2014 trinucleotide model)
+# ════════════════════
+
+def load_mutation_rates(path: str = "/mnt/d/phd/scripts/16_ev_signature_predictor/data/samocha_mutation_rates/fordist_1KG_mutation_rate_table.txt") -> dict:
+    """
+    Load the Samocha 2014 trinucleotide mutation rate table.
+    Returns {(trinucleotide_context, alt_base): rate}.
+    context is the reference trinucleotide centered on the mutated base;
+    alt_base is the central base after substitution.
+    Strand-symmetric + all 64 contexts present => coding-strand context is
+    valid for both plus- and minus-strand genes with no correction.
+    """
+    mu = pd.read_csv(path, sep=r"\s+", header=None, names=["from_tri", "to_tri", "mu"])
+    return {(r.from_tri, r.to_tri[1]): r.mu for r in mu.itertuples()}
+
+# red (top-left) - white (diagonal) - green (bottom-right) diverging field
+_RWG = mcolors.LinearSegmentedColormap.from_list(
+    "RWG", [(0.84, 0.19, 0.15), (1, 1, 1), (0.30, 0.69, 0.29)])
+
+
+def _count_to_size(counts, smin=25, smax=420):
+    """Log-scaled observed count -> marker size, anchored to the 10/100/1000 legend ticks."""
+    c = np.log10(np.clip(counts, 1, None))
+    lo, hi = np.log10(10), np.log10(1000)
+    frac = np.clip((c - lo) / (hi - lo), 0, 1)
+    return smin + (smax - smin) * frac
+
+def plot_obs_exp_scatter(
+    result: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+    min_total: int = 5,
+    pseudocount: float = 0.5,
+    n_label: int = 12,
+    always_label_sources: list[str] | None = None,
+    fdr_threshold: float = 0.05,
+    show_significance: bool = False,
+    lim: float | None = None,                 # None=auto; number=symmetric [-lim, lim]
+    bg_gradient: bool = True,                 # red-white-green diagonal field
+    bg_alpha: float = 0.22,
+    bg_span: float | None = None,             # None=auto (95th pct of |x-y|); set e.g. 2.0 to fix
+    highlight_sources: list[str] | None = None,   # e.g. ["R"] -> emphasise, fade the rest
+    faint_alpha: float = 0.12,
+    title_suffix: str = "",
+) -> plt.Figure:
+    """
+    Per-substitution obs/exp scatter (main figure).
+      x = log2(obs/exp) POS, y = log2(obs/exp) NEG, one point per substitution.
+    Off-diagonal = group-specific deviation; the red->white->green background
+    encodes direction (red top-left = neg-enriched/pos-depleted, green bottom-
+    right = pos-enriched/neg-depleted, white = no difference). Marker SIZE encodes
+    observed count (log scale; legend ticks at 10/100/1000). Significance (optional
+    ring) uses the conditional binomial obs/exp test computed inline.
+
+    highlight_sources: if given (e.g. ["R"] or ["R","G"]), points from those source
+    AAs are emphasised + labelled, all others faded (faint_alpha) and unlabelled.
+    """
+    obs_pos, obs_neg = result["obs_pos"], result["obs_neg"]
+    exp_pos, exp_neg = result["exp_pos"], result["exp_neg"]
+    always = set(always_label_sources or [])
+    hl = set(highlight_sources or [])
+
+    recs = []
+    for af in ORDERED_AA:
+        for at in ORDERED_AA:
+            if af == at:
+                continue
+            # print()
+            op, on = obs_pos.loc[af, at], obs_neg.loc[af, at]
+            ep, en = exp_pos.loc[af, at], exp_neg.loc[af, at]
+            if ep <= 0 or en <= 0 or (op + on) < min_total:
+                continue
+            x = np.log2((op + pseudocount) / ep)
+            y = np.log2((on + pseudocount) / en)
+            recs.append(dict(af=af, at=at, x=x, y=y, diff=x - y,
+                             total=op + on, p=binom_oe_test(op, on, ep, en)))
+    d = pd.DataFrame(recs)
+    # print(d)
+    if d.empty:
+        print("no cells pass filter")
+        return None
+    d = d.reset_index(drop=True)
+    ok = d["p"].notna()
+    d["fdr"] = np.nan
+    if ok.any():
+        d.loc[ok, "fdr"] = multipletests(d.loc[ok, "p"], method="fdr_bh")[1]
+    d["abs_diff"] = d["diff"].abs()
+
+    if lim is None:
+        lim = float(np.nanmax(np.abs(np.r_[d.x, d.y]))) * 1.15
+
+    fig, ax = plt.subplots(figsize=(8.8, 8.2))
+
+    # background diverging field: colour by (x - y) = signed distance from diagonal
+    if bg_gradient:
+        if bg_span is None:
+            bg_span = float(np.nanpercentile(d["abs_diff"], 95)) or 1.0
+        N = 400
+        g = np.linspace(-lim, lim, N)
+        GX, GY = np.meshgrid(g, g)
+        field = np.clip((GX - GY) / (2 * bg_span), -1, 1)
+        ax.imshow(field, extent=[-lim, lim, -lim, lim], origin="lower",
+                  cmap=_RWG, vmin=-1, vmax=1, alpha=bg_alpha, aspect="equal", zorder=0)
+
+    ax.axhline(0, color="#cccccc", lw=0.8, zorder=1)
+    ax.axvline(0, color="#cccccc", lw=0.8, zorder=1)
+    ax.plot([-lim, lim], [-lim, lim], ls="--", color="#777777", lw=1.0, zorder=1)
+
+    sizes = _count_to_size(d["total"].values)
+
+    if hl:
+        is_hl = d["af"].isin(hl).values
+        ax.scatter(d.x[~is_hl], d.y[~is_hl], s=sizes[~is_hl], c="#888888",
+                   alpha=faint_alpha, edgecolor="none", zorder=2)
+        ax.scatter(d.x[is_hl], d.y[is_hl], s=sizes[is_hl], c="#1f1f1f",
+                   alpha=0.9, edgecolor="white", linewidth=0.5, zorder=4)
+        label_mask = is_hl
+    else:
+        ax.scatter(d.x, d.y, s=sizes, c="#333333", alpha=0.8,
+                   edgecolor="white", linewidth=0.4, zorder=3)
+        label_mask = np.ones(len(d), bool)
+
+    if show_significance:
+        sig = (d["fdr"] < fdr_threshold).values & label_mask
+        ax.scatter(d.x[sig], d.y[sig], s=sizes[sig] + 55, facecolors="none",
+                   edgecolor="yellow", linewidth=1.3, zorder=5)
+    
+
+    if hl:
+        to_label = set(d.index[label_mask].tolist())
+    else:
+        to_label = set(d.sort_values("abs_diff", ascending=False).head(n_label).index.tolist())
+        to_label |= set(d.index[d["af"].isin(always)].tolist())
+
+    if show_significance:
+        to_label |= set(d.index[sig].tolist())
+    # for i in to_label:
+    #     ax.annotate(f"{d.at[i,'af']}\u2192{d.at[i,'at']}", (d.at[i, "x"], d.at[i, "y"]),
+    #                 textcoords="offset points", xytext=(5, 4), fontsize=11, zorder=6)
+    for i in to_label:
+        left = d.at[i, "x"] < d.at[i, "y"]          # above diagonal -> label on the left
+        ax.annotate(f"{d.at[i,'af']}\u2192{d.at[i,'at']}", (d.at[i, "x"], d.at[i, "y"]),
+                    textcoords="offset points",
+                    xytext=(-5, 4) if left else (5, 4),
+                    ha="right" if left else "left",
+                    fontsize=11, zorder=6)
+    ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_aspect("equal")
+    ax.set_xlabel("log\u2082(obs / exp)  —  positive set\n"
+                  "\u2190 fewer than expected                more than expected \u2192",
+                  fontsize=10.5, labelpad=8)
+    ax.set_ylabel("log\u2082(obs / exp)  —  negative set\n"
+                  "\u2190 fewer than expected                more than expected \u2192",
+                  fontsize=10.5, labelpad=8)
+    ax.text(lim * 0.96, -lim * 0.96, "pos-enriched / neg-depleted",
+            ha="right", va="bottom", fontsize=9, color=(0.20, 0.50, 0.20))
+    ax.text(-lim * 0.96, lim * 0.96, "neg-enriched / pos-depleted",
+            ha="left", va="top", fontsize=9, color=(0.70, 0.15, 0.12))
+
+    # size legend OUTSIDE the axes, fixed ticks
+    for cval in (10, 100, 1000):
+        ax.scatter([], [], s=_count_to_size(np.array([cval]))[0], c="#333333",
+                   alpha=0.8, edgecolor="white", linewidth=0.4, label=f"{cval:,}")
+    leg = ax.legend(title="observed count\n(pos+neg)", loc="center left",
+                    bbox_to_anchor=(1.02, 0.5), fontsize=9, title_fontsize=9,
+                    labelspacing=1.6, borderpad=1.0, handletextpad=1.2,
+                    frameon=True, framealpha=0.9)
+    ax.add_artist(leg)
+
+    title = f"Per-substitution obs/exp: pos vs neg ({dataset})"
+    if highlight_sources:
+        title += f" — {','.join(highlight_sources)} highlighted"
+    if title_suffix:
+        title += f" — {title_suffix}"
+    ax.set_title(title, fontsize=11)
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "obs_exp_scatter", dataset=dataset)
+    return d[d["af"].isin(hl)], fig
+
+
+
+def compute_grouped_substitution_matrix(
+    df: pd.DataFrame,
+    region_by_id: dict,
+    rates: dict,
+    group_col: str = "group",
+    pos_label: str = "pos",
+    neg_label: str = "neg",
+    before_col: str = "before_aa",
+    after_col: str = "after_aa",
+    consequence_col: str = "Consequence",
+    groups: dict | None = None,
+    pseudocount: float = 0.5,
+) -> dict:
+    """
+    Physicochemical-group substitution enrichment, obs/exp-corrected.
+
+    Pools observed missense counts AND rate-weighted expected counts into
+    group×group bins (SNP-reachable pairs only), then per off-diagonal cell:
+      - log2_or : log2((obs_pos/exp_pos)/(obs_neg/exp_neg))  [ratio-of-ratios]
+      - pval/fdr: conditional binomial obs/exp test (binom_oe_test) + BH-FDR
+
+    `groups` defaults to AA_GROUPS; pass a different AA->group dict to test
+    alternative groupings (column/row order still follows GROUP_ORDER, so a
+    custom dict must use the same group labels as GROUP_ORDER to plot cleanly).
+    """
+    groups = groups or AA_GROUPS
+
+    # ---------- observed pooled ----------
+    missense = df[
+        df[consequence_col].fillna("").str.contains("missense_variant") &
+        df[before_col].notna() & df[after_col].notna() &
+        df[before_col].isin(ORDERED_AA) & df[after_col].isin(ORDERED_AA)
+    ].copy()
+    missense = missense[missense.apply(
+        lambda r: r[after_col] in SNP_REACHABLE.get(r[before_col], []), axis=1)]
+    missense["grp_from"] = missense[before_col].map(groups)
+    missense["grp_to"] = missense[after_col].map(groups)
+
+    def _pool_obs(sub):
+        c = pd.DataFrame(0, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+        for (gf, gt), g in sub.groupby(["grp_from", "grp_to"]):
+            if gf in c.index and gt in c.columns:
+                c.loc[gf, gt] = len(g)
+        return c
+
+    counts_pos = _pool_obs(missense[missense[group_col] == pos_label])
+    counts_neg = _pool_obs(missense[missense[group_col] == neg_label])
+
+    # ---------- expected pooled (rate-weighted, scaled to each group's obs total) ----------
+    exp_pos20 = compute_expected_substitution_counts(
+        region_by_id, pos_label, observed_total=int(counts_pos.values.sum()), rates=rates)
+    exp_neg20 = compute_expected_substitution_counts(
+        region_by_id, neg_label, observed_total=int(counts_neg.values.sum()), rates=rates)
+
+    def _pool_exp(mat):
+        c = pd.DataFrame(0.0, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+        for af in mat.index:
+            ga = groups.get(af)
+            if ga not in c.index:
+                continue
+            for at in mat.columns:
+                if af == at:
+                    continue
+                gt = groups.get(at)
+                if gt not in c.columns:
+                    continue
+                c.loc[ga, gt] += mat.loc[af, at]
+        return c
+
+    exp_pos = _pool_exp(exp_pos20)
+    exp_neg = _pool_exp(exp_neg20)
+
+    # ---------- row-normalized observed freqs (for the bar panel) ----------
+    def _rn(c):
+        rs = c.sum(axis=1).replace(0, np.nan)
+        return c.div(rs, axis=0).fillna(0)
+    freq_pos, freq_neg = _rn(counts_pos), _rn(counts_neg)
+
+    # ---------- per-cell ratio-of-ratios + binomial obs/exp test ----------
+    log2_or = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+    pval = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+    tested = []
+    for gf in GROUP_ORDER[::-1]:
+        for gt in GROUP_ORDER:
+            if gf == gt:
+                continue
+            op, on = counts_pos.loc[gf, gt], counts_neg.loc[gf, gt]
+            ep, en = exp_pos.loc[gf, gt], exp_neg.loc[gf, gt]
+            if ep <= 0 or en <= 0 or (op + on) == 0:
+                continue
+            log2_or.loc[gf, gt] = np.log2(((op + pseudocount) / ep) /
+                                          ((on + pseudocount) / en))
+            p = binom_oe_test(op, on, ep, en)
+            if pd.isna(p):
+                continue
+            pval.loc[gf, gt] = p
+            tested.append((gf, gt, p))
+
+    fdr = pd.DataFrame(np.nan, index=GROUP_ORDER[::-1], columns=GROUP_ORDER)
+    if tested:
+        corr = multipletests([t[2] for t in tested], method="fdr_bh")[1]
+        for (gf, gt, _), pf in zip(tested, corr):
+            fdr.loc[gf, gt] = pf
+
+    return {
+        "counts_pos": counts_pos, "counts_neg": counts_neg,
+        "exp_pos": exp_pos, "exp_neg": exp_neg,
+        "freq_pos": freq_pos, "freq_neg": freq_neg,
+        "log2_or": log2_or,          # NOW ratio-of-ratios, not Fisher OR
+        "pval": pval, "fdr": fdr,
+        "n_tested": len(tested),
+    }
+
+def run_grouped_substitution_analysis(
+    df: pd.DataFrame,
+    region_by_id: dict,
+    rates_path: str = "/mnt/d/phd/scripts/16_ev_signature_predictor/data/samocha_mutation_rates/fordist_1KG_mutation_rate_table.txt",
+    group_col: str = "group",
+    pos_label: str = "pos",
+    neg_label: str = "neg",
+    before_col: str = "before_aa",
+    after_col: str = "after_aa",
+    consequence_col: str = "Consequence",
+    groups: dict | None = None,
     dataset: str = "gnomad",
     save: bool = True,
     **plot_kwargs,
 ) -> dict:
-    """[Dataset-agnostic] End-to-end grouped substitution analysis."""
+    """End-to-end grouped obs/exp substitution analysis (mutability-corrected)."""
+    rates = load_mutation_rates(rates_path)
     result = compute_grouped_substitution_matrix(
-        df, group_col=group_col, pos_label=pos_label, neg_label=neg_label,
+        df, region_by_id, rates,
+        group_col=group_col, pos_label=pos_label, neg_label=neg_label,
         before_col=before_col, after_col=after_col,
-        consequence_col=consequence_col,
+        consequence_col=consequence_col, groups=groups,
     )
     plot_grouped_substitution_matrix(result, dataset=dataset, save=save, **plot_kwargs)
     return result
+
+# def plot_obs_exp_scatter_grouped(
+#     result: dict,
+#     groups: dict | None = None,
+#     dataset: str = "gnomad",
+#     save: bool = True,
+#     min_total: int = 5,
+#     pseudocount: float = 0.5,
+#     fdr_threshold: float = 0.05,
+#     show_significance: bool = True,
+#     label_all: bool = True,
+#     n_label: int = 12,
+#     title_suffix: str = "",
+# ):
+#     """
+#     Group-level obs/exp scatter.
+#       x = log2(obs/exp) POS,  y = log2(obs/exp) NEG, one point per group-pair.
+#     Pools a 20x20 result dict by `groups` (default AA_GROUPS; swap freely to
+#     brainstorm groupings). Significance is the conditional binomial obs/exp test
+#     computed inline + BH-FDR across group-pairs — does NOT use result['fdr'].
+#     Returns (fig, dataframe_of_points).
+#     """
+#     groups = groups or AA_GROUPS
+
+#     def _pool(mat):
+#         glabels = sorted(set(groups.values()))
+#         c = pd.DataFrame(0.0, index=glabels, columns=glabels)
+#         for af in mat.index:
+#             ga = groups.get(af)
+#             if ga is None:
+#                 continue
+#             for at in mat.columns:
+#                 if af == at:
+#                     continue
+#                 gt = groups.get(at)
+#                 if gt is None:
+#                     continue
+#                 c.loc[ga, gt] += mat.loc[af, at]
+#         return c
+
+#     OP, ON = _pool(result["obs_pos"]), _pool(result["obs_neg"])
+#     EP, EN = _pool(result["exp_pos"]), _pool(result["exp_neg"])
+
+#     recs = []
+#     for gf in OP.index:
+#         for gt in OP.columns:
+#             op, on = OP.loc[gf, gt], ON.loc[gf, gt]
+#             ep, en = EP.loc[gf, gt], EN.loc[gf, gt]
+#             if ep <= 0 or en <= 0 or (op + on) < min_total:
+#                 continue
+#             x = np.log2((op + pseudocount) / ep)
+#             y = np.log2((on + pseudocount) / en)
+#             recs.append(dict(gf=gf, gt=gt, x=x, y=y, diff=x - y,
+#                              total=op + on, p=binom_oe_test(op, on, ep, en)))
+#     d = pd.DataFrame(recs)
+#     if d.empty:
+#         print("no group-pairs pass filter")
+#         return None, None
+#     d = d.reset_index(drop=True)
+#     ok = d["p"].notna()
+#     d["fdr"] = np.nan
+#     if ok.any():
+#         d.loc[ok, "fdr"] = multipletests(d.loc[ok, "p"], method="fdr_bh")[1]
+#     d["abs_diff"] = d["diff"].abs()
+
+#     lim = float(np.nanmax(np.abs(np.r_[d.x, d.y]))) * 1.20
+#     sizes = 40 + 260 * (d["total"] / d["total"].max())
+
+#     fig, ax = plt.subplots(figsize=(8.6, 8.2))
+#     ax.axhline(0, color="#bbbbbb", lw=0.8, zorder=0)
+#     ax.axvline(0, color="#bbbbbb", lw=0.8, zorder=0)
+#     ax.plot([-lim, lim], [-lim, lim], ls="--", color="#888888", lw=1.0, zorder=1)
+#     ax.fill_between([-lim, lim], [-lim - 0.4, lim - 0.4], [-lim + 0.4, lim + 0.4],
+#                     color="#999999", alpha=0.08, zorder=0)
+#     colours = [GROUP_COLORS["pos"] if v > 0 else GROUP_COLORS["neg"] for v in d["diff"]]
+
+#     if show_significance:
+#         sig = d["fdr"] < fdr_threshold
+#         ax.scatter(d.x[~sig], d.y[~sig], s=sizes[~sig],
+#                    c=[c for c, s in zip(colours, sig) if not s],
+#                    alpha=0.55, edgecolor="none", zorder=3)
+#         ax.scatter(d.x[sig], d.y[sig], s=sizes[sig],
+#                    c=[c for c, s in zip(colours, sig) if s],
+#                    alpha=0.9, edgecolor="black", linewidth=1.5, zorder=4)
+#     else:
+#         ax.scatter(d.x, d.y, s=sizes, c=colours, alpha=0.6, edgecolor="none", zorder=3)
+
+#     lab_idx = (set(range(len(d))) if label_all
+#                else set(d.sort_values("abs_diff", ascending=False).head(n_label).index))
+#     for i in lab_idx:
+#         sig_i = (d.at[i, "fdr"] < fdr_threshold) if pd.notna(d.at[i, "fdr"]) else False
+#         ax.annotate(f"{d.at[i,'gf']}\u2192{d.at[i,'gt']}", (d.at[i, "x"], d.at[i, "y"]),
+#                     textcoords="offset points", xytext=(5, 4), fontsize=8,
+#                     fontweight="bold" if (show_significance and sig_i) else "normal", zorder=5)
+
+#     ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_aspect("equal")
+#     ax.set_xlabel("log\u2082(obs / exp)  —  POS group", fontsize=11)
+#     ax.set_ylabel("log\u2082(obs / exp)  —  NEG group", fontsize=11)
+#     ax.text(lim * 0.97, -lim * 0.97, "pos-enriched\nneg-depleted", ha="right", va="bottom",
+#             fontsize=8, color=GROUP_COLORS["pos"], alpha=0.8)
+#     ax.text(-lim * 0.97, lim * 0.97, "neg-enriched\npos-depleted", ha="left", va="top",
+#             fontsize=8, color=GROUP_COLORS["neg"], alpha=0.8)
+
+#     qs = np.unique(np.quantile(d["total"], [0.1, 0.5, 0.95]).round().astype(int))
+#     handles = [plt.scatter([], [], s=40 + 260 * (q / d["total"].max()),
+#                            c="#777777", alpha=0.6, edgecolor="none", label=f"{int(q)}")
+#                for q in qs]
+#     leg = ax.legend(handles=handles, title="obs count (pos+neg)", loc="lower left",
+#                     fontsize=8, title_fontsize=8, labelspacing=1.2,
+#                     borderpad=0.8, framealpha=0.9)
+#     ax.add_artist(leg)
+
+#     title = f"Group-level obs/exp: pos vs neg ({dataset})"
+#     if title_suffix:
+#         title += f" — {title_suffix}"
+#     sub = "off-diagonal = group-specific; size ~ count"
+#     if show_significance:
+#         sub += f"; ring = obs/exp binom FDR<{fdr_threshold:g}"
+#     ax.set_title(title + "\n" + sub, fontsize=10)
+#     plt.tight_layout()
+#     if save:
+#         save_figure(fig, "obs_exp_scatter_grouped", dataset=dataset)
+#     return fig, d
+
+
+def is_cpg_transition(context: str | None, alt: str) -> bool:
+    """
+    True if a single-nt change is a CpG transition (the hypermutable class):
+    C>T where the C is immediately 5' of a G, or G>A where the G is immediately
+    3' of a C. `context` is the reference trinucleotide (5'flank, ref, 3'flank);
+    `alt` is the new central base. CpG is strand-symmetric, so this gives the
+    same answer on coding- or genomic-strand context.
+    """
+    if context is None or len(context) != 3:
+        return False
+    ref = context[1]
+    if ref == "C" and context[2] == "G" and alt == "T":
+        return True
+    if ref == "G" and context[0] == "C" and alt == "A":
+        return True
+    return False
+
+def annotate_cpg_status(df: pd.DataFrame, fasta_path: str,
+                        chrom_col="CHROM", pos_col="POS",
+                        ref_col="REF", alt_col="ALT") -> pd.DataFrame:
+    """
+    Add a boolean `cpg` column flagging CpG-transition variants, using genomic
+    (plus-strand) context from a reference FASTA. POS is 1-based; pysam.fetch is
+    0-based half-open, so the trinucleotide centered on POS is fetch(POS-2, POS+1).
+    Strand-safe: gnomAD REF/ALT/POS are genomic plus-strand, and CpG is
+    strand-symmetric, so this matches the coding-strand classification used for
+    the expected side.
+    """
+    import pysam
+    fa = pysam.FastaFile(fasta_path)
+    out = df.copy()
+
+    def _cpg(r):
+        ref, alt = r[ref_col], r[alt_col]
+        if len(str(ref)) != 1 or len(str(alt)) != 1:   # SNVs only
+            return False
+        try:
+            tri = fa.fetch(str(r[chrom_col]), int(r[pos_col]) - 2,
+                           int(r[pos_col]) + 1).upper()
+        except (KeyError, ValueError):
+            return False
+        if len(tri) != 3:
+            return False
+        # tri = [POS-1, POS, POS+1]; tri[1] should equal REF
+        return is_cpg_transition(tri, alt)
+
+    out["cpg"] = out.apply(_cpg, axis=1)
+    fa.close()
+    return out
+
+def _size_from_count(counts, ticks):
+    """Log-scaled count -> marker size, anchored to the legend ticks."""
+    lo, hi = np.log10(min(ticks)), np.log10(max(ticks))
+    c = np.log10(np.clip(counts, 1, None))
+    frac = np.clip((c - lo) / (hi - lo), 0, 1)
+    return 25 + (420 - 25) * frac
+
+
+def plot_obs_exp_scatter_grouped(
+    result: dict,
+    groups: dict | None = None,
+    dataset: str = "gnomad",
+    save: bool = True,
+    min_total: int = 5,
+    pseudocount: float = 0.5,
+    fdr_threshold: float = 0.05,
+    show_significance: bool = False,
+    lim: float | None = None,
+    bg_gradient: bool = True,
+    bg_alpha: float = 0.22,
+    bg_span: float | None = None,
+    highlight_sources: list[str] | None = None,   # source GROUP labels, e.g. ["Pos"], ["C/G/P"]
+    faint_alpha: float = 0.12,
+    size_ticks: tuple = (100, 1000, 10000),
+    label_all: bool = True,
+    n_label: int | None = None,
+    title_suffix: str = "",
+):
+    """
+    Group-level obs/exp scatter, styled to match plot_obs_exp_scatter.
+      x = log2(obs/exp) POS, y = log2(obs/exp) NEG, one point per group-pair.
+    Pools a 20x20 result dict by `groups` (default AA_GROUPS; swap to brainstorm).
+    Red->white->green background encodes direction; marker size encodes observed
+    count; significance ring uses the conditional binomial obs/exp test inline.
+    `highlight_sources` here = source GROUP labels (emphasise those, fade the rest).
+    Returns (fig, dataframe_of_points).
+    """
+    groups = groups or AA_GROUPS
+    hl = set(highlight_sources or [])
+
+    def _pool(mat):
+        gl = sorted(set(groups.values()))
+        c = pd.DataFrame(0.0, index=gl, columns=gl)
+        for af in mat.index:
+            ga = groups.get(af)
+            if ga is None:
+                continue
+            for at in mat.columns:
+                if af == at:
+                    continue
+                gt = groups.get(at)
+                if gt is None:
+                    continue
+                c.loc[ga, gt] += mat.loc[af, at]
+        return c
+
+    OP, ON = _pool(result["obs_pos"]), _pool(result["obs_neg"])
+    EP, EN = _pool(result["exp_pos"]), _pool(result["exp_neg"])
+
+    recs = []
+    for gf in OP.index:
+        for gt in OP.columns:
+            op, on = OP.loc[gf, gt], ON.loc[gf, gt]
+            ep, en = EP.loc[gf, gt], EN.loc[gf, gt]
+            if ep <= 0 or en <= 0 or (op + on) < min_total:
+                continue
+            x = np.log2((op + pseudocount) / ep)
+            y = np.log2((on + pseudocount) / en)
+            recs.append(dict(gf=gf, gt=gt, x=x, y=y, diff=x - y,
+                             total=op + on, p=binom_oe_test(op, on, ep, en)))
+    d = pd.DataFrame(recs)
+    if d.empty:
+        print("no group-pairs pass filter")
+        return None, None
+    d = d.reset_index(drop=True)
+    ok = d["p"].notna()
+    d["fdr"] = np.nan
+    if ok.any():
+        d.loc[ok, "fdr"] = multipletests(d.loc[ok, "p"], method="fdr_bh")[1]
+    d["abs_diff"] = d["diff"].abs()
+
+    if lim is None:
+        lim = float(np.nanmax(np.abs(np.r_[d.x, d.y]))) * 1.20
+
+    fig, ax = plt.subplots(figsize=(8.8, 8.2))
+
+    if bg_gradient:
+        if bg_span is None:
+            bg_span = float(np.nanpercentile(d["abs_diff"], 95)) or 1.0
+        g = np.linspace(-lim, lim, 400)
+        GX, GY = np.meshgrid(g, g)
+        field = np.clip((GX - GY) / (2 * bg_span), -1, 1)
+        ax.imshow(field, extent=[-lim, lim, -lim, lim], origin="lower",
+                  cmap=_RWG, vmin=-1, vmax=1, alpha=bg_alpha, aspect="equal", zorder=0)
+
+    ax.axhline(0, color="#cccccc", lw=0.8, zorder=1)
+    ax.axvline(0, color="#cccccc", lw=0.8, zorder=1)
+    ax.plot([-lim, lim], [-lim, lim], ls="--", color="#777777", lw=1.0, zorder=1)
+
+    sizes = _size_from_count(d["total"].values, size_ticks)
+
+    if hl:
+        is_hl = d["gf"].isin(hl).values
+        ax.scatter(d.x[~is_hl], d.y[~is_hl], s=sizes[~is_hl], c="#888888",
+                   alpha=faint_alpha, edgecolor="none", zorder=2)
+        ax.scatter(d.x[is_hl], d.y[is_hl], s=sizes[is_hl], c="#1f1f1f",
+                   alpha=0.9, edgecolor="white", linewidth=0.5, zorder=4)
+        label_mask = is_hl
+    else:
+        ax.scatter(d.x, d.y, s=sizes, c="#333333", alpha=0.8,
+                   edgecolor="white", linewidth=0.4, zorder=3)
+        label_mask = np.ones(len(d), bool)
+
+    if show_significance:
+        sig = (d["fdr"] < fdr_threshold).values & label_mask
+        ax.scatter(d.x[sig], d.y[sig], s=sizes[sig] + 55, facecolors="none",
+                   edgecolor="yellow", linewidth=1.3, zorder=5)
+
+    if hl:
+        to_label = set(d.index[label_mask].tolist())
+    elif label_all:
+        to_label = set(range(len(d)))
+    elif n_label is not None:
+        to_label = set(d.sort_values("abs_diff", ascending=False).head(n_label).index)
+    else:
+        to_label = set(d.sort_values("abs_diff", ascending=False).head(12).index)
+    print(to_label)
+    print(n_label)
+    if show_significance:
+        to_label |= set(d.index[sig].tolist())
+    print(to_label)
+    for i in to_label:
+        left = d.at[i, "x"] < d.at[i, "y"]          # above diagonal -> label on the left
+        ax.annotate(f"{d.at[i,'gf']}\u2192{d.at[i,'gt']}", (d.at[i, "x"], d.at[i, "y"]),
+                    textcoords="offset points",
+                    xytext=(-5, 4) if left else (5, 4),
+                    ha="right" if left else "left",
+                    fontsize=11, zorder=6)
+    ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_aspect("equal")
+    ax.set_xlabel("log\u2082(obs / exp)  —  positive set\n"
+                  "\u2190 fewer than expected                more than expected \u2192",
+                  fontsize=10.5, labelpad=8)
+    ax.set_ylabel("log\u2082(obs / exp)  —  negative set\n"
+                  "\u2190 fewer than expected                more than expected \u2192",
+                  fontsize=10.5, labelpad=8)
+    ax.text(lim * 0.96, -lim * 0.96, "pos-enriched / neg-depleted",
+            ha="right", va="bottom", fontsize=8, color=(0.20, 0.50, 0.20))
+    ax.text(-lim * 0.96, lim * 0.96, "neg-enriched / pos-depleted",
+            ha="left", va="top", fontsize=8, color=(0.70, 0.15, 0.12))
+
+    for cval in size_ticks:
+        ax.scatter([], [], s=_size_from_count(np.array([cval]), size_ticks)[0],
+                   c="#333333", alpha=0.8, edgecolor="white", linewidth=0.4, label=f"{cval:,}")
+    leg = ax.legend(title="observed count\n(pos+neg)", loc="center left",
+                    bbox_to_anchor=(1.02, 0.5), fontsize=9, title_fontsize=9,
+                    labelspacing=1.6, borderpad=1.0, handletextpad=1.2,
+                    frameon=True, framealpha=0.9)
+    ax.add_artist(leg)
+
+    title = f"Group-level obs/exp: pos vs neg ({dataset})"
+    if highlight_sources:
+        title += f" — {','.join(highlight_sources)} highlighted"
+    if title_suffix:
+        title += f" — {title_suffix}"
+    ax.set_title(title, fontsize=11)
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "obs_exp_scatter_grouped", dataset=dataset)
+    return d, fig

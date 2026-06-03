@@ -18,11 +18,15 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import chi2_contingency
 from statsmodels.stats.multitest import multipletests
+from scipy.stats import wilcoxon, mannwhitneyu
 
 from src.analysis_visualization.plot_config import (
     GROUP_COLORS, save_figure, significance_stars,
 )
-
+# The enumeration function lives in rg_analysis.py
+from src.analysis_visualization.rg_analysis import (
+    enumerate_single_nt_substitutions,
+)
 
 # ════════════════════════════════════════════════════════════════════════════
 # Human codon usage reference (Kazusa 2007, homo sapiens 9606)
@@ -587,3 +591,443 @@ def run_codon_usage_analysis(
     # )
 
     return {"codon_counts": codon_counts, "test_results": test_results}
+
+
+
+def _seq_metrics(dna: str):
+    """GC fraction, CpG fraction, and CpG observed/expected for one sequence.
+    Measured on the coding strand; CpG is strand-symmetric so no rev-comp needed.
+    expected CpG count = (#C * #G) / length  (standard CpG-island convention)."""
+    s = dna.upper(); L = len(s)
+    if L < 2:
+        return np.nan, np.nan, np.nan
+    nC, nG, nCpG = s.count("C"), s.count("G"), s.count("CG")
+    gc = (nC + nG) / L
+    cpg_frac = nCpG / (L - 1)
+    exp = (nC * nG) / L
+    oe = (nCpG / exp) if exp > 0 else np.nan
+    return gc, cpg_frac, oe
+
+
+def compute_gc_cpg_by_group(region_by_id: dict, group_col="group",
+                            pos_label="pos", neg_label="neg"):
+    """Per-region GC%, CpG fraction, CpG O/E + per-group Mann-Whitney (region = unit)."""
+    rows = []
+    for rid, r in region_by_id.items():
+        dna = r.get("dna", "")
+        if not dna:
+            continue
+        gc, cf, oe = _seq_metrics(dna)
+        rows.append(dict(region_id=rid, group=r.get(group_col),
+                         length=len(dna), gc=gc, cpg_frac=cf, cpg_oe=oe))
+    df = pd.DataFrame(rows)
+    stats = {}
+    for metric in ["gc", "cpg_frac", "cpg_oe"]:
+        p = df.loc[df.group == pos_label, metric].dropna()
+        n = df.loc[df.group == neg_label, metric].dropna()
+        U, pval = mannwhitneyu(p, n, alternative="two-sided")
+        stats[metric] = dict(pos_median=p.median(), neg_median=n.median(),
+                             pos_mean=p.mean(), neg_mean=n.mean(),
+                             n_pos=len(p), n_neg=len(n), U=U, pval=pval)
+    return df, stats
+
+# literature reference values (sourced; see notes below)
+GC_CPG_REF = {
+    "gc":     {"cgi_threshold": 0.50, "genome_avg": 0.41},   # CGI >=50%; human genome ~41%
+    "cpg_oe": {"cgi_threshold": 0.60, "genome_bulk": 0.20},   # CGI >=0.6; bulk genome ~0.2
+}
+
+
+def plot_gc_cpg_by_group(df, stats, dataset="gnomad", save=True,
+                         pos_label="pos", neg_label="neg"):
+    """Three-panel composition figure (GC%, CpG fraction, CpG O/E): per-region
+    points + boxplots, Mann-Whitney stars, and sourced reference lines.
+    Consumes the (df, stats) returned by compute_gc_cpg_by_group."""
+    metrics = [("gc", "GC content", "fraction G+C"),
+               ("cpg_frac", "CpG fraction", "CpG / dinucleotide"),
+               ("cpg_oe", "CpG observed/expected", "O/E ratio")]
+    fig, axes = plt.subplots(1, 3, figsize=(6.5, 3.25))
+    pc, nc = GROUP_COLORS["pos"], GROUP_COLORS["neg"]
+
+    for ax, (key, title, ylab) in zip(axes, metrics):
+        p = df.loc[df.group == pos_label, key].dropna()
+        n = df.loc[df.group == neg_label, key].dropna()
+        for i, (vals, col) in enumerate([(p, pc), (n, nc)]):
+            x = np.random.normal(i*2, 0.06, len(vals))
+
+            ax.scatter(x, vals, s=10, color=col, alpha=0.35, edgecolor="none", zorder=2)
+            ax.boxplot(vals, positions=[i*2], widths=0.5, showfliers=False,
+
+
+                       medianprops=dict(color="black", lw=1.5), zorder=3)
+        ax.set_xticks([0, 2])
+        ax.set_xticklabels([f"pos\n(n={len(p)})", f"neg\n(n={len(n)})"])
+        ax.set_title(title, fontsize=11, pad=15)
+        ax.set_ylabel(ylab, fontsize=9)
+        ymax = max(p.max() if len(p) else 0, n.max() if len(n) else 0)
+        # ymin = min(p.min() if len(p), n.min() if len(n))
+
+        ax.set_ylim(None, ymax*1.1)
+
+
+
+        ax.yaxis.grid(True, alpha=0.3, lw=0.5); ax.set_axisbelow(True)
+
+        if key == "gc":
+            ax.axhline(GC_CPG_REF["gc"]["cgi_threshold"], ls="--", color="#666", lw=1)
+            ax.text(1, GC_CPG_REF["gc"]["cgi_threshold"], "CGI \u22650.50",
+                    fontsize=7, color="#666", va="bottom", ha="center")
+            ax.axhline(GC_CPG_REF["gc"]["genome_avg"], ls=":", color="#999", lw=1)
+            ax.text(1, GC_CPG_REF["gc"]["genome_avg"], "genome ~0.41",
+                    fontsize=7, color="#999", va="bottom", ha="center")
+        if key == "cpg_oe":
+            ax.axhline(GC_CPG_REF["cpg_oe"]["cgi_threshold"], ls="--", color="#666", lw=1)
+            ax.text(1, GC_CPG_REF["cpg_oe"]["cgi_threshold"], "CGI \u22650.60",
+                    fontsize=7, color="#666", va="bottom", ha="center")
+            ax.axhline(GC_CPG_REF["cpg_oe"]["genome_bulk"], ls=":", color="#999", lw=1)
+            ax.text(1, GC_CPG_REF["cpg_oe"]["genome_bulk"], "bulk ~0.20",
+                    fontsize=7, color="#999", va="bottom", ha="center")
+
+        pv = stats[key]["pval"]
+        star = "***" if pv < 1e-3 else "**" if pv < 1e-2 else "*" if pv < 0.05 else "n.s."
+
+        ax.text(1, ymax*1.05, f"{star}  (p={pv:.1e})", ha="center", va="top", fontsize=8)
+
+    fig.suptitle(f"Sequence composition: pos vs neg regions ({dataset})", fontsize=12, y=1.02)
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "gc_cpg_composition", dataset=dataset)
+    return fig
+
+
+
+
+from scipy.stats import mannwhitneyu
+
+# standard genetic code (stops included; excluded from mutability)
+_BASES = "ACGT"
+
+
+def codon_intrinsic_mutability(rates: dict) -> dict:
+    """
+    Per-codon total mutability = sum over its 3 positions x 3 alternative bases of
+    the 1KG mutation rate. The middle base uses the exact codon-internal
+    trinucleotide context; the two terminal bases marginalise the unknown flanking
+    base over A/C/G/T (the same approximation for every codon, so it cancels in
+    pos-vs-neg comparisons). Internal CpGs (e.g. arginine CGN) are captured exactly.
+    Returns {codon: total_mutability}.
+    """
+    out = {}
+    for codon, aa in _CODON_TABLE.items():
+        if aa == "*":
+            continue
+        total = 0.0
+        for pos in range(3):
+            ref = codon[pos]
+            for alt in _BASES:
+                if alt == ref:
+                    continue
+                if pos == 1:
+                    r = rates.get((codon, alt))            # exact internal context
+                    if r:
+                        total += r
+                elif pos == 0:
+                    vals = [rates.get((f + codon[0] + codon[1], alt)) for f in _BASES]
+                    vals = [v for v in vals if v is not None]
+                    if vals:
+                        total += np.mean(vals)
+                else:  # pos == 2
+                    vals = [rates.get((codon[1] + codon[2] + f, alt)) for f in _BASES]
+                    vals = [v for v in vals if v is not None]
+                    if vals:
+                        total += np.mean(vals)
+        out[codon] = total
+    return out
+
+
+def _codons(dna: str) -> list[str]:
+    dna = dna.upper()
+    return [dna[i:i + 3] for i in range(0, len(dna) - 2, 3)]
+
+
+def compute_codon_mutability_by_group(region_by_id: dict, rates: dict,
+                                      ref_usage: dict | None = None,
+                                      group_col="group", pos_label="pos", neg_label="neg"):
+    """
+    Per region, per amino acid: mean intrinsic mutability of the codons used for
+    that AA. Aggregates per group with a per-AA Mann-Whitney (region = unit).
+    ref_usage: optional {codon: relative_freq_within_its_AA} (e.g. Kazusa) -> a
+    single reference mutability per AA, shown as a line in the plot.
+    Returns (df, stats, codon_mutability_dict).
+    """
+    cm = codon_intrinsic_mutability(rates)
+    if ref_usage is None:
+        ref_usage = HUMAN_CODON_USAGE
+    # normalize ref_usage to within-AA fractions (accepts raw Kazusa per-1000 values)
+    if ref_usage:
+        aa_tot = {}
+        for c, f in ref_usage.items():
+            aa = _CODON_TABLE.get(c)
+            if aa and aa != "*":
+                aa_tot[aa] = aa_tot.get(aa, 0.0) + f
+        ref_usage = {c: f / aa_tot[_CODON_TABLE[c]]
+                     for c, f in ref_usage.items()
+                     if _CODON_TABLE.get(c, "*") != "*" and aa_tot.get(_CODON_TABLE[c], 0) > 0}
+
+    rows = []
+    for rid, r in region_by_id.items():
+        grp = r.get(group_col)
+        dna = r.get("dna", "")
+        if not dna:
+            continue
+        per_aa = {}
+        for c in _codons(dna):
+            aa = _CODON_TABLE.get(c)
+            if aa is None or aa == "*" or c not in cm:
+                continue
+            per_aa.setdefault(aa, []).append(cm[c])
+        for aa, vals in per_aa.items():
+            rows.append(dict(region_id=rid, group=grp, aa=aa,
+                             mean_mut=np.mean(vals), n=len(vals)))
+    df = pd.DataFrame(rows)
+
+    # reference (e.g. Kazusa): usage-weighted mean mutability per AA
+    ref_val = {}
+    if ref_usage:
+        aa_codons = {}
+        for c, aa in _CODON_TABLE.items():
+            if aa != "*":
+                aa_codons.setdefault(aa, []).append(c)
+        for aa, codons in aa_codons.items():
+            w = np.array([ref_usage.get(c, 0.0) for c in codons])
+            m = np.array([cm.get(c, 0.0) for c in codons])
+            ref_val[aa] = (w @ m) / w.sum() if w.sum() > 0 else np.nan
+
+    stats = {}
+    for aa in df["aa"].unique():
+        p = df[(df.group == pos_label) & (df.aa == aa)]["mean_mut"]
+        n = df[(df.group == neg_label) & (df.aa == aa)]["mean_mut"]
+        if len(p) >= 5 and len(n) >= 5:
+            U, pv = mannwhitneyu(p, n, alternative="two-sided")
+        else:
+            pv = np.nan
+        stats[aa] = dict(pos_med=p.median(), neg_med=n.median(),
+                         n_pos=len(p), n_neg=len(n), pval=pv,
+                         ref=ref_val.get(aa, np.nan))
+    return df, stats, cm
+
+
+def plot_codon_mutability(df, stats, cm, amino_acids, dataset="gnomad", save=True,
+                          pos_label="pos", neg_label="neg", seed=0):
+    """Per-AA panels: pos/neg per-region mean codon mutability (points + box),
+    Mann-Whitney stars, and an optional Kazusa reference line."""
+    np.random.seed(seed)  # reproducible jitter
+    aas = [a for a in amino_acids if a in df["aa"].unique()]
+    n = len(aas)
+    fig, axes = plt.subplots(n, 1, figsize=(3,n * 2.6), sharey=False)
+    if n == 1:
+        axes = [axes]
+    pc, nc = GROUP_COLORS["pos"], GROUP_COLORS["neg"]
+
+    for ax, aa in zip(axes, aas):
+        p = df[(df.group == pos_label) & (df.aa == aa)]["mean_mut"]
+        nn = df[(df.group == neg_label) & (df.aa == aa)]["mean_mut"]
+        for i, (vals, col) in enumerate([(p, pc), (nn, nc)]):
+            x = np.random.normal(i, 0.06, len(vals))
+            ax.scatter(x, vals, s=10, color=col, alpha=0.3, edgecolor="none", zorder=2)
+            ax.boxplot(vals, positions=[i], widths=0.5, showfliers=False,
+                       medianprops=dict(color="black", lw=1.4), zorder=3)
+        ref = stats[aa]["ref"]
+        if not np.isnan(ref):
+            ax.axhline(ref, ls="--", color="#444", lw=1.1, zorder=4)
+            ax.text(0.5, ref, "human\naverage", fontsize=7.5, color="#444", va="bottom", ha="center")
+        ax.set_xticks([0, 1]); ax.set_xticklabels(["pos", "neg"], fontsize=9)
+        pv = stats[aa]["pval"]
+        star = ("***" if pv < 1e-3 else "**" if pv < 1e-2 else "*" if pv < 0.05 else "n.s.") \
+            if not np.isnan(pv) else ""
+        ax.set_title(f"{aa}\n{star}" if not np.isnan(pv) else aa, fontsize=10) #  (p={pv:.1e})
+        ax.yaxis.grid(True, alpha=0.3, lw=0.5); ax.set_axisbelow(True)
+        # if ax is axes[0]:
+        ax.set_ylabel("mean codon mutability\n(\u03a3 1KG rate / codon)", fontsize=8)
+        ax.tick_params(axis="y", labelsize=7)
+
+    fig.suptitle(f"Per-amino-acid codon mutability: pos vs neg ({dataset})", fontsize=12, y=1.03)
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "codon_mutability", dataset=dataset)
+    return fig
+
+
+
+
+def delta_gc(ref: str, alt: str) -> int:
+    """Net GC bases gained by a single-nt substitution: +1 / 0 / -1. Strand-invariant."""
+    return int(alt in "GC") - int(ref in "GC")
+
+
+def delta_cpg(context: str | None, alt: str) -> int:
+    """Change in CpG dinucleotide count from changing the central base of `context`
+    (= [5'flank, ref, 3'flank]) to `alt`. Covers the two dinucleotides the central
+    base sits in. Strand-symmetric -> coding-strand context is valid."""
+    if context is None or len(context) != 3:
+        return 0
+    l, r, rt = context[0], context[1], context[2]
+    old = int(l == "C" and r == "G") + int(r == "C" and rt == "G")
+    new = int(l == "C" and alt == "G") + int(alt == "C" and rt == "G")
+    return new - old
+
+
+def _parse_codons(field):
+    """VEP Codons 'Gga/Aga' -> (ref_codon, alt_codon, offset, coding_ref, coding_alt)."""
+    if not isinstance(field, str) or "/" not in field:
+        return None
+    a, b = field.split("/")[:2]
+    a, b = a.strip(), b.strip()
+    if len(a) != 3 or len(b) != 3:
+        return None
+    off = next((i for i in range(3) if a[i] != b[i]), None)
+    if off is None:
+        return None
+    return a.upper(), b.upper(), off, a[off].upper(), b[off].upper()
+
+
+def compute_gc_cpg_flux(df, region_by_id, rates, enumerate_fn,
+                        group_col="group", pos_label="pos", neg_label="neg",
+                        consequence_col="Consequence", consequence="missense_variant",
+                        region_id_col="region_id", ppos_col="protein_position_int",
+                        region_start_col="region_start_aa", codons_col="Codons",
+                        min_obs=3):
+    """
+    Per region: observed vs rate-weighted-EXPECTED mean ΔGC and ΔCpG per variant.
+      expected = neutral mutational flux (enumerate all possible missense single-nt
+                 changes, weight each by its 1KG rate).
+      observed = mean over the region's actual variants.
+    The tested quantity is per-region (obs - exp): departure from neutral flux.
+
+    Returns (merged_df, stats, match_rate). match_rate is the fraction of observed
+    variants whose dna position matched the coding ref base -> MUST be ~1.0 to trust
+    the ΔCpG (mapping/off-by-one check). ΔGC does not depend on the mapping.
+    """
+    # ---------- EXPECTED: rate-weighted over all possible missense single-nt changes ----------
+    exp_rows = []
+    for rid, r in region_by_id.items():
+        dna = r.get("dna", "")
+        prot = r.get("prot_seq", "")
+        if not dna or not prot or len(dna) != 3 * len(prot):
+            continue
+        enum = enumerate_fn(dna, prot)
+        miss = enum[enum["consequence"] == "missense"]
+        w, dgc, dcpg = [], [], []
+        for row in miss.itertuples(index=False):
+            ctx = getattr(row, "context", None)
+            if ctx is None:
+                continue
+            rate = rates.get((ctx, row.alt_base))
+            if rate is None:
+                continue
+            w.append(rate)
+            dgc.append(delta_gc(row.ref_base, row.alt_base))
+            dcpg.append(delta_cpg(ctx, row.alt_base))
+        if not w:
+            continue
+        w = np.array(w)
+        exp_rows.append(dict(region_id=rid, group=r.get(group_col),
+                             exp_dgc=np.average(dgc, weights=w),
+                             exp_dcpg=np.average(dcpg, weights=w)))
+    exp_df = pd.DataFrame(exp_rows).set_index("region_id")
+
+    # ---------- OBSERVED: per variant, mapped to coding context for ΔCpG ----------
+    mis = df[df[consequence_col].fillna("").str.contains(consequence)].copy()
+    obs_rows = []
+    n_ctx_ok = n_ctx_tot = 0
+    for rid, sub in mis.groupby(region_id_col):
+        if rid not in region_by_id:
+            continue
+        dna = region_by_id[rid]["dna"].upper()
+        start = sub[region_start_col].iloc[0]
+        dgc, dcpg = [], []
+        for _, v in sub.iterrows():
+            pc = _parse_codons(v.get(codons_col))
+            if pc is None:
+                continue
+            _, _, off, cref, calt = pc
+            dgc.append(delta_gc(cref, calt))            # strand-invariant; from Codons directly
+            try:
+                ci = int(v[ppos_col]) - int(start) - 1
+            except Exception:
+                continue
+            dpos = 3 * ci + off
+            n_ctx_tot += 1
+            if 0 < dpos < len(dna) - 1:
+                ctx = dna[dpos - 1:dpos + 2]
+                if dna[dpos] == cref:                    # sanity: dna matches coding ref
+                    n_ctx_ok += 1
+                    dcpg.append(delta_cpg(ctx, calt))
+        if len(dgc) >= min_obs:
+            obs_rows.append(dict(region_id=rid,
+                                 obs_dgc=np.mean(dgc),
+                                 obs_dcpg=np.mean(dcpg) if dcpg else np.nan,
+                                 n_obs=len(dgc)))
+    obs_df = pd.DataFrame(obs_rows).set_index("region_id")
+    match_rate = (n_ctx_ok / n_ctx_tot) if n_ctx_tot else np.nan
+
+    merged = exp_df.join(obs_df, how="inner")
+    merged["diff_dgc"] = merged["obs_dgc"] - merged["exp_dgc"]
+    merged["diff_dcpg"] = merged["obs_dcpg"] - merged["exp_dcpg"]
+
+    # ---------- tests ----------
+    stats = {}
+    for metric, col in [("dgc", "diff_dgc"), ("dcpg", "diff_dcpg")]:
+        st = {}
+        for lab in [pos_label, neg_label]:
+            v = merged.loc[merged.group == lab, col].dropna()
+            st[lab] = dict(median=v.median(), mean=v.mean(), n=len(v),
+                           wilcoxon_p=wilcoxon(v).pvalue if len(v) >= 6 else np.nan)
+        p = merged.loc[merged.group == pos_label, col].dropna()
+        n = merged.loc[merged.group == neg_label, col].dropna()
+        st["between_mwu_p"] = (mannwhitneyu(p, n, alternative="two-sided").pvalue
+                               if len(p) >= 5 and len(n) >= 5 else np.nan)
+        stats[metric] = st
+    return merged, stats, match_rate
+
+
+def plot_gc_cpg_flux(merged, stats, dataset="gnomad", save=True,
+                     pos_label="pos", neg_label="neg", seed=0):
+    """Two panels (ΔGC, ΔCpG): per-region (obs - exp) flux, pos vs neg, neutral line at 0.
+    Within-group 'vs 0' = Wilcoxon signed-rank; between-group = Mann-Whitney."""
+    np.random.seed(seed)
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.8))
+    pc, nc = GROUP_COLORS["pos"], GROUP_COLORS["neg"]
+    panels = [("dgc", "diff_dgc", "\u0394GC flux  (obs \u2212 expected)"),
+              ("dcpg", "diff_dcpg", "\u0394CpG flux  (obs \u2212 expected)")]
+    for ax, (metric, col, title) in zip(axes, panels):
+        groupvals = []
+        for i, (lab, c) in enumerate([(pos_label, pc), (neg_label, nc)]):
+            v = merged.loc[merged.group == lab, col].dropna()
+            groupvals.append(v)
+            x = np.random.normal(i, 0.06, len(v))
+            ax.scatter(x, v, s=10, color=c, alpha=0.35, edgecolor="none", zorder=2)
+            ax.boxplot(v, positions=[i], widths=0.5, showfliers=False,
+                       medianprops=dict(color="black", lw=1.5), zorder=3)
+        ax.axhline(0, color="#444", ls="--", lw=1.1, zorder=1)
+        ax.set_xticks([0, 1]); ax.set_xticklabels([pos_label, neg_label])
+        ax.set_title(title, fontsize=10, pad=18)
+        ax.set_ylabel("per-region (obs \u2212 exp) mean per variant", fontsize=8)
+        ax.yaxis.grid(True, alpha=0.3, lw=0.5); ax.set_axisbelow(True)
+        # within-group stars under each box
+        ymin = ax.get_ylim()[0]
+        for i, lab in enumerate([pos_label, neg_label]):
+            wp = stats[metric][lab]["wilcoxon_p"]
+            star = ("***" if wp < 1e-3 else "**" if wp < 1e-2 else "*" if wp < 0.05 else "n.s.") \
+                if not np.isnan(wp) else ""
+            ax.text(i, ymin, f"vs0:{star}", ha="center", va="bottom", fontsize=7, color="#555")
+        bp = stats[metric]["between_mwu_p"]
+        bstar = ("***" if bp < 1e-3 else "**" if bp < 1e-2 else "*" if bp < 0.05 else "n.s.") \
+            if not np.isnan(bp) else ""
+        ax.text(0.5, ax.get_ylim()[1], f"pos vs neg: {bstar}", ha="center", va="top", fontsize=7)
+    fig.suptitle(f"GC / CpG flux: variant gain/loss vs neutral expectation ({dataset})",
+                 fontsize=11, y=1.0)
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "gc_cpg_flux", dataset=dataset)
+    return fig

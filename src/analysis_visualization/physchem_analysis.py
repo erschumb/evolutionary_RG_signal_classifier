@@ -34,7 +34,7 @@ from tqdm.notebook import tqdm
 from localcider.sequenceParameters import SequenceParameters as SeqParams
 
 from src.analysis_visualization.plot_config import (
-    FIGSIZE_SINGLE, GROUP_COLORS, save_figure, significance_stars,
+    FIGSIZE_SINGLE, FIGSIZE_SLIM, GROUP_COLORS, save_figure, significance_stars,
 )
 
 
@@ -226,7 +226,7 @@ def plot_delta_feature(
     _, p = stats.mannwhitneyu(pos_vals, neg_vals, alternative="two-sided")
     sig = significance_stars(p)
 
-    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
+    fig, ax = plt.subplots(figsize=FIGSIZE_SLIM)
     sns.boxplot(
         data=sub, x="group", y=col, order=["neg", "pos"],
         palette=[GROUP_COLORS["neg"], GROUP_COLORS["pos"]],
@@ -251,17 +251,17 @@ def plot_delta_feature(
     ax.text(0.5, y_bar * 1.05, sig, ha="center", va="bottom", fontsize=8)
     ax.set_ylim(-ymax * 1.3, ymax * 1.3)
 
-    ax.set_title(f"Mean Δ {feature} per region (missense)")
+    ax.set_title(f"Mean Δ {feature} per region\n(missense-only)", pad=0)
     ax.set_ylabel(f"Δ {feature}")
     ax.set_xlabel("")
 
     stats_text = (
         f"p = {p:.1e} {sig}\n"
-        f"n_pos = {len(pos_vals)}\n"
+        f"n_pos = {len(pos_vals)}, "
         f"n_neg = {len(neg_vals)}"
     )
-    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
-            fontsize=6.5, va="top", ha="left",
+    ax.text(0.05, 0.05, stats_text, transform=ax.transAxes,
+            fontsize=6, va="bottom", ha="left",
             bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
 
     sns.despine()

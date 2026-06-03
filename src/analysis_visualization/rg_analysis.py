@@ -7,7 +7,7 @@ from scipy import stats
 import re
 
 from src.analysis_visualization.plot_config import (
-    FIGSIZE_SINGLE, FIGSIZE_DOUBLE, GROUP_COLORS,
+    FIGSIZE_SLIM, FIGSIZE_SINGLE, FIGSIZE_DOUBLE, GROUP_COLORS,
     save_figure, significance_stars,
 )
 
@@ -1537,6 +1537,7 @@ def enumerate_single_nt_substitutions(
     rows = []
     for i in range(n):
         ref_base = dna[i]
+        context = dna[i - 1:i + 2] if 0 < i < n - 1 else None   # <-- ADD THIS
         for alt_base in _NUCLEOTIDES:
             if alt_base == ref_base:
                 continue
@@ -1572,6 +1573,7 @@ def enumerate_single_nt_substitutions(
                 "dna_pos": i,
                 "ref_base": ref_base,
                 "alt_base": alt_base,
+                "context": context, 
                 "aa_pos": aa_pos,
                 "aa_from": ref_aa,
                 "aa_to": alt_aa,
@@ -2154,12 +2156,13 @@ def _four_box_panel(ax, data, y_col, title):
     """
     # Build an ordered categorical "box" column
     def _label(row):
-        return f"{row['group']}\n{row['source']}"
+        return f"{row['group']}\n{row['source'][:3] + '.'}"
     data = data.copy()
     data["box"] = data.apply(_label, axis=1)
+    # print(data['box'])
  
     box_order = [
-        "neg\nobserved", "neg\nexpected", "pos\nobserved", "pos\nexpected"
+        "neg\nobs.", "neg\nexp.", "pos\nobs.", "pos\nexp."
     ]
     colors = _box_colors_ordered()
  
@@ -2175,7 +2178,6 @@ def _four_box_panel(ax, data, y_col, title):
         data=data, x="box", y=y_col, order=box_order,
         color="black", size=1.0, alpha=0.3, jitter=0.15, ax=ax,
     )
- 
     # Statistical tests
     def _pair(g_a, s_a, g_b, s_b):
         a = data[(data["group"] == g_a) & (data["source"] == s_a)][y_col].dropna()
@@ -2206,7 +2208,7 @@ def _four_box_panel(ax, data, y_col, title):
     ax.set_ylim(0, ymax * 1.30)
     ax.set_title(title)
     ax.set_xlabel("")
-    ax.tick_params(axis="x", labelsize=6.5)
+    ax.tick_params(axis="x", labelsize=7.5)
  
     return {
         "p_neg_observed_vs_expected": p_neg_dev,
@@ -2236,7 +2238,7 @@ def plot_rg_events_vs_expected_boxes(
  
     fig, axes = plt.subplots(
         1, 4,
-        figsize=(FIGSIZE_DOUBLE[0] * 1.1, FIGSIZE_SINGLE[1] + 0.5),
+        figsize=(FIGSIZE_DOUBLE[0] * 1.25, FIGSIZE_SINGLE[1] + 0.3),
         sharey=False,
     )
  
@@ -2425,7 +2427,7 @@ def plot_delta_rg_ratio_per_variant(
     _, p = stats.mannwhitneyu(pos_vals, neg_vals, alternative="two-sided")
     sig = significance_stars(p)
  
-    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
+    fig, ax = plt.subplots(figsize=FIGSIZE_SLIM)
     sns.boxplot(
         data=df, x="group", y="delta_rg_ratio_rel",
         order=["neg", "pos"],
@@ -2449,8 +2451,8 @@ def plot_delta_rg_ratio_per_variant(
     ax.text(0.5, y_bar * 1.05, sig, ha="center", va="bottom", fontsize=8)
     ax.set_ylim(-ymax * 1.3, ymax * 1.3)
  
-    ax.set_title("Relative Δ RG ratio per variant\n(R/G-affecting missense only)")
-    ax.set_ylabel("(mutant_ratio − WT_ratio) / WT_ratio")
+    ax.set_title("Relative Δ RG ratio per variant\n(R/G-affecting missense only)", pad=12)
+    ax.set_ylabel("Relative Δ(R/G ratio)")
     ax.set_xlabel("")
  
     stats_text = (
@@ -2458,8 +2460,8 @@ def plot_delta_rg_ratio_per_variant(
         f"n_pos = {len(pos_vals):,}\n"
         f"n_neg = {len(neg_vals):,}"
     )
-    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
-            fontsize=6.5, va="top", ha="left",
+    ax.text(0.05, 0.05, stats_text, transform=ax.transAxes,
+            fontsize=6.5, va="bottom", ha="left",
             bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
  
     sns.despine()
@@ -2518,7 +2520,7 @@ def plot_delta_rg_ratio_per_region(
     _, p = stats.mannwhitneyu(pos_vals, neg_vals, alternative="two-sided")
     sig = significance_stars(p)
  
-    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
+    fig, ax = plt.subplots(figsize=FIGSIZE_SLIM)
     sns.boxplot(
         data=per_region, x="group", y="mean_delta_rg_ratio_rel",
         order=["neg", "pos"],
@@ -2542,8 +2544,8 @@ def plot_delta_rg_ratio_per_region(
     ax.text(0.5, y_bar * 1.05, sig, ha="center", va="bottom", fontsize=8)
     ax.set_ylim(-ymax * 1.3, ymax * 1.3)
  
-    ax.set_title("Mean relative Δ RG ratio per region\n(all missense)")
-    ax.set_ylabel("Mean (mutant_ratio − WT_ratio) / WT_ratio")
+    ax.set_title("Mean relative Δ RG ratio per region\n(all missense)",pad=12)
+    ax.set_ylabel("Relative mean Δ(R/G ratio)")
     ax.set_xlabel("")
  
     stats_text = (
@@ -2551,8 +2553,8 @@ def plot_delta_rg_ratio_per_region(
         f"n_pos = {len(pos_vals)}\n"
         f"n_neg = {len(neg_vals)}"
     )
-    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
-            fontsize=6.5, va="top", ha="left",
+    ax.text(0.05, 0.05, stats_text, transform=ax.transAxes,
+            fontsize=6.5, va="bottom", ha="left",
             bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
  
     sns.despine()

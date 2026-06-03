@@ -518,3 +518,309 @@ def plot_af_spectrum_by_subset(
  
     return all_stats
  
+"""
+Save as: src/classifier_features/af_features.py
+
+Per-region AF-derived features for the false-negative RG motif classifier.
+
+Aggregates variant-level gnomAD AF data into region_id-level features spanning:
+  - variant counts per consequence class
+  - AF distribution shape (median, singleton/common fractions)
+  - selection-proxy ratios (mis/syn, lof/syn, within-region MAPS-like deltas)
+  - AlphaMissense × AF interactions
+  - RG-disrupting subset features
+
+Missing values (regions with too few variants for a given feature) are returned
+as NaN. Imputation, if desired, is handled downstream by build_classifier_features
+or by an sklearn Pipeline at fit time — this keeps the function consistent with
+the rest of the per-region functions (compute_alphamissense_per_region, etc.)
+which also return NaN for unobserved cases.
+
+[gnomAD-specific] — requires AF_joint and AlphaMissense columns.
+"""
+
+# from __future__ import annotations
+# import numpy as np
+# import pandas as pd
+
+from src.analysis_visualization.region_analysis import collapse_consequence
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Config
+# ════════════════════════════════════════════════════════════════════════════
+
+SINGLETON_AF_THRESHOLD = 1e-5
+COMMON_AF_THRESHOLD    = 1e-3
+RARE_AF_THRESHOLD      = 1e-4   # for MAPS-like delta and AM-rare counts
+COUNT_PSEUDOCOUNT      = 0.5    # for ratio features (avoid div-by-zero, Haldane-style)
+
+CONSEQUENCE_CLASSES = ["synonymous", "missense", "inframe_indel", "LoF"]
+CONSEQUENCE_SHORT   = {
+    "synonymous":    "syn",
+    "missense":      "mis",
+    "inframe_indel": "indel",
+    "LoF":           "lof",
+}
+
+AM_LIKELY_PATHOGENIC_LABEL = "likely_pathogenic"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Small helpers
+# ════════════════════════════════════════════════════════════════════════════
+
+def _safe_median_log10(s: pd.Series, min_n: int = 1) -> float:
+    """Median of log10(AF) for a series of AF values. NaN if fewer than min_n
+    positive values."""
+    vals = s[s > 0]
+    if len(vals) < min_n:
+        return np.nan
+    return float(np.log10(vals.median()))
+
+
+def _safe_fraction(numerator_mask: pd.Series, denom_series: pd.Series) -> float:
+    """Fraction of denom_series matching numerator_mask. NaN if denom is empty."""
+    if len(denom_series) == 0:
+        return np.nan
+    return float(numerator_mask.sum() / len(denom_series))
+
+
+def _log_ratio_with_pseudo(num: float, den: float, pseudo: float = COUNT_PSEUDOCOUNT) -> float:
+    """log2((num + pseudo) / (den + pseudo)). Always defined."""
+    return float(np.log2((num + pseudo) / (den + pseudo)))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Per-region feature extractors (one function per feature family)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _count_features(region_df: pd.DataFrame) -> dict:
+    """Variant counts per consequence class. Always defined; zero is valid."""
+    out = {}
+    for cclass in CONSEQUENCE_CLASSES:
+        short = CONSEQUENCE_SHORT[cclass]
+        out[f"af_n_{short}"] = int((region_df["consequence_class"] == cclass).sum())
+    return out
+
+
+def _shape_features(region_df: pd.DataFrame, af_col: str) -> dict:
+    """Median log10(AF), singleton fraction, common fraction per consequence."""
+    out = {}
+    for cclass in CONSEQUENCE_CLASSES:
+        short = CONSEQUENCE_SHORT[cclass]
+        sub = region_df[region_df["consequence_class"] == cclass]
+        af = sub[af_col]
+        af_pos = af[af > 0]
+
+        out[f"af_median_log10_{short}"] = _safe_median_log10(af_pos)
+
+        if len(af_pos) == 0:
+            out[f"af_frac_singleton_{short}"] = np.nan
+            out[f"af_frac_common_{short}"]    = np.nan
+        else:
+            out[f"af_frac_singleton_{short}"] = _safe_fraction(
+                af_pos < SINGLETON_AF_THRESHOLD, af_pos
+            )
+            out[f"af_frac_common_{short}"] = _safe_fraction(
+                af_pos >= COMMON_AF_THRESHOLD, af_pos
+            )
+    return out
+
+
+def _selection_ratio_features(region_df: pd.DataFrame, af_col: str) -> dict:
+    """mis/syn and lof/syn count ratios; median log-AF deltas; MAPS-like delta."""
+    syn = region_df[region_df["consequence_class"] == "synonymous"]
+    mis = region_df[region_df["consequence_class"] == "missense"]
+    lof = region_df[region_df["consequence_class"] == "LoF"]
+
+    out = {
+        "af_log2ratio_mis_syn_count": _log_ratio_with_pseudo(len(mis), len(syn)),
+        "af_log2ratio_lof_syn_count": _log_ratio_with_pseudo(len(lof), len(syn)),
+    }
+
+    syn_af = syn.loc[syn[af_col] > 0, af_col]
+    mis_af = mis.loc[mis[af_col] > 0, af_col]
+
+    # Median log10 AF delta (missense − synonymous). NaN if either side empty.
+    if len(syn_af) >= 1 and len(mis_af) >= 1:
+        out["af_median_log10_delta_mis_syn"] = float(
+            np.log10(mis_af.median()) - np.log10(syn_af.median())
+        )
+    else:
+        out["af_median_log10_delta_mis_syn"] = np.nan
+
+    # MAPS-like delta: fraction-rare in missense minus fraction-rare in synonymous.
+    # Positive = missense enriched in rare variants relative to synonymous
+    # (i.e. consistent with purifying selection acting on missense).
+    if len(syn_af) >= 1 and len(mis_af) >= 1:
+        frac_rare_mis = float((mis_af < RARE_AF_THRESHOLD).sum() / len(mis_af))
+        frac_rare_syn = float((syn_af < RARE_AF_THRESHOLD).sum() / len(syn_af))
+        out["af_frac_rare_delta_mis_syn"] = frac_rare_mis - frac_rare_syn
+    else:
+        out["af_frac_rare_delta_mis_syn"] = np.nan
+
+    return out
+
+
+def _am_interaction_features(
+    region_df: pd.DataFrame,
+    af_col: str,
+    am_score_col: str,
+    am_class_col: str,
+) -> dict:
+    """AlphaMissense × AF interactions on missense variants only."""
+    mis = region_df[
+        (region_df["consequence_class"] == "missense") &
+        region_df[am_score_col].notna() &
+        (region_df[af_col] > 0)
+    ]
+
+    out = {}
+
+    if len(mis) == 0:
+        out["af_am_score_weighted_by_rarity"] = np.nan
+    else:
+        # Mean of AM_score × −log10(AF). Higher = deleterious-predicted
+        # variants tend to be rare (consistent with purifying selection).
+        weights = -np.log10(mis[af_col].values)
+        out["af_am_score_weighted_by_rarity"] = float(
+            (mis[am_score_col].values * weights).mean()
+        )
+
+    # Count features are always defined (zero is meaningful).
+    rare_path = region_df[
+        (region_df["consequence_class"] == "missense") &
+        (region_df[am_class_col] == AM_LIKELY_PATHOGENIC_LABEL) &
+        (region_df[af_col] > 0) &
+        (region_df[af_col] < RARE_AF_THRESHOLD)
+    ]
+    out["af_n_likely_path_rare"] = int(len(rare_path))
+
+    return out
+
+
+def _rg_subset_features(region_df: pd.DataFrame, af_col: str) -> dict:
+    """All-of-the-above logic restricted to is_rg_disrupting variants,
+       plus within-region RG-vs-non-RG AF ratio (on missense)."""
+    if "is_rg_disrupting" not in region_df.columns:
+        raise KeyError(
+            "Column 'is_rg_disrupting' not found. Run "
+            "compute_rg_disruption_columns first."
+        )
+
+    rg_mask = region_df["is_rg_disrupting"].fillna(False)
+    rg = region_df[rg_mask]
+    rg_af = rg.loc[rg[af_col] > 0, af_col]
+
+    out = {
+        "af_rg_n_variants":     int(len(rg)),
+        "af_rg_median_log10":   _safe_median_log10(rg_af),
+        "af_rg_frac_singleton": (
+            _safe_fraction(rg_af < SINGLETON_AF_THRESHOLD, rg_af)
+            if len(rg_af) > 0 else np.nan
+        ),
+    }
+
+    # Within-region log-AF delta between RG-disrupting and non-RG-disrupting
+    # missense. Restricted to missense for interpretability.
+    mis = region_df[region_df["consequence_class"] == "missense"]
+    mis_rg     = mis.loc[mis["is_rg_disrupting"].fillna(False) & (mis[af_col] > 0), af_col]
+    mis_non_rg = mis.loc[(~mis["is_rg_disrupting"].fillna(False)) & (mis[af_col] > 0), af_col]
+    if len(mis_rg) >= 1 and len(mis_non_rg) >= 1:
+        out["af_rg_vs_nonrg_log10_delta_mis"] = float(
+            np.log10(mis_rg.median()) - np.log10(mis_non_rg.median())
+        )
+    else:
+        out["af_rg_vs_nonrg_log10_delta_mis"] = np.nan
+
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Feature name registry
+# ════════════════════════════════════════════════════════════════════════════
+
+def get_feature_names() -> list[str]:
+    """Canonical ordered list of feature column names."""
+    names: list[str] = []
+
+    # Counts
+    for cclass in CONSEQUENCE_CLASSES:
+        names.append(f"af_n_{CONSEQUENCE_SHORT[cclass]}")
+
+    # Shape
+    for cclass in CONSEQUENCE_CLASSES:
+        s = CONSEQUENCE_SHORT[cclass]
+        names += [f"af_median_log10_{s}", f"af_frac_singleton_{s}", f"af_frac_common_{s}"]
+
+    # Selection ratios
+    names += [
+        "af_log2ratio_mis_syn_count",
+        "af_log2ratio_lof_syn_count",
+        "af_median_log10_delta_mis_syn",
+        "af_frac_rare_delta_mis_syn",
+    ]
+
+    # AM interactions
+    names += [
+        "af_am_score_weighted_by_rarity",
+        "af_n_likely_path_rare",
+    ]
+
+    # RG subset
+    names += [
+        "af_rg_n_variants",
+        "af_rg_median_log10",
+        "af_rg_frac_singleton",
+        "af_rg_vs_nonrg_log10_delta_mis",
+    ]
+
+    return names
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Top-level entry point — matches the per-region function signature pattern
+# used elsewhere in the pipeline (compute_alphamissense_per_region, etc.)
+# ════════════════════════════════════════════════════════════════════════════
+
+def compute_af_features_per_region(
+    df: pd.DataFrame,
+    af_col: str = "AF_joint",
+    am_score_col: str = "am_pathogenicity",
+    am_class_col: str = "am_class",
+) -> pd.DataFrame:
+    """
+    Per-region AF-derived features for the RG-motif classifier.
+
+    Returns one row per region with columns:
+        ["region_id", "group", *get_feature_names()]
+
+    Matches the shape of compute_alphamissense_per_region etc. so it can be
+    merged into build_classifier_features with a single merge() call on
+    ["region_id", "group"]. NaN values are left for downstream imputation.
+
+    Parameters
+    ----------
+    df : variant-level DataFrame. Must have columns:
+            "region_id", "group", af_col, am_score_col, am_class_col,
+            "Consequence", "is_rg_disrupting".
+    """
+    df = df.copy()
+    df["consequence_class"] = df["Consequence"].apply(collapse_consequence)
+
+    feature_rows = []
+    for (region_id, group), region_df in df.groupby(["region_id", "group"], sort=False):
+        row = {"region_id": region_id, "group": group}
+        row.update(_count_features(region_df))
+        row.update(_shape_features(region_df, af_col))
+        row.update(_selection_ratio_features(region_df, af_col))
+        row.update(_am_interaction_features(region_df, af_col, am_score_col, am_class_col))
+        row.update(_rg_subset_features(region_df, af_col))
+        feature_rows.append(row)
+
+    feat_df = pd.DataFrame(feature_rows)
+
+    # Canonical column order: region_id, group, then features in registry order
+    feat_df = feat_df[["region_id", "group"] + get_feature_names()]
+    return feat_df

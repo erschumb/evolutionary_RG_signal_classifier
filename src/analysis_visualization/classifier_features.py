@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 import numpy as np
 import pandas as pd
+
 import re
 
 # Reuse existing module functions
@@ -42,7 +43,7 @@ from src.analysis_visualization.codon_usage import (
     compute_codon_counts, _AA_TO_CODONS, MULTI_CODON_AA, _CODON_TABLE,
 )
 from src.analysis_visualization.substitution_matrix_analysis import AA_GROUPS
-
+from src.analysis_visualization.af_spectrum import compute_af_features_per_region
 
 # ════════════════════════════════════════════════════════════════════════════
 # Substitution class definitions (Option B: biochemically meaningful classes)
@@ -464,21 +465,36 @@ def build_classifier_features(
     # Start with consequence features (includes region_length, variant_density)
     print("  1/8 consequence + variant density...")
     cons_df = compute_consequence_per_region(df_rg)
-    # Keep per-consequence counts + densities + fractions, drop raw consequence class column
     features = cons_df.copy()
+
+    # Attach uniprot_accession (one per region) from df_rg
+    region_uniprot = (
+        df_rg[["region_id", "uniprot_accession"]]
+        .dropna(subset=["uniprot_accession"])
+        .drop_duplicates(subset=["region_id"])
+    )
+    features = features.merge(region_uniprot, on="region_id", how="left")
+    # print(features.columns)
 
     # AlphaMissense
     print("  2/8 AlphaMissense...")
     am_df = compute_alphamissense_per_region(df_rg)
     features = features.merge(am_df, on=["region_id", "group"], how="left")
 
-    # # ESM1b LLR
-    # if df_esm is not None:
-    #     print("  3/9 ESM1b LLR...")
-    #     esm_df = compute_esm_per_region(df_esm)
-    #     features = features.merge(esm_df, on=["region_id", "group"], how="left")
-    # else:
-    #     print("  3/9 ESM1b LLR SKIPPED (no df_esm provided)")
+
+    # AF-derived features
+    print("  2b/8 AF features...")
+    # from src.af_features import compute_af_features_per_region
+    af_df = compute_af_features_per_region(df_rg)
+    features = features.merge(af_df, on=["region_id", "group"], how="left")
+
+    # ESM1b LLR
+    if df_esm is not None:
+        print("  3/9 ESM1b LLR...")
+        esm_df = compute_esm_per_region(df_esm)
+        features = features.merge(esm_df, on=["region_id", "group"], how="left")
+    else:
+        print("  3/9 ESM1b LLR SKIPPED (no df_esm provided)")
 
     # RG density + burden
     print("  3/8 RG density + burden...")
@@ -526,7 +542,7 @@ def build_classifier_features(
     features["label"] = (features["group"] == "pos").astype(int)
 
     # Reorder: region_id, group, label first
-    front = ["region_id", "group", "label"]
+    front = ["region_id", "group", "label", "uniprot_accession"]
     rest = [c for c in features.columns if c not in front]
     features = features[front + rest]
 
