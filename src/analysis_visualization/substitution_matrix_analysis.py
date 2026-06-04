@@ -835,7 +835,7 @@ def plot_composition_normalized_matrix(
     vmax_ratio: float | None = None,
     vmax_diff: float | None = None,
     save_table: bool = False,                 # <-- ADD
-    table_path: str | None = None,            # <-- ADD (default derived from dataset)
+    save_table_path: str | None = None,            # <-- ADD (default derived from dataset)
     ) -> plt.Figure:
     """
     Three-panel heatmap:
@@ -932,6 +932,30 @@ def plot_composition_normalized_matrix(
         save_figure(fig, "substitution_matrix_composition_normalized",
                     dataset=dataset)
 
+    table = result_to_table(result) 
+    # ── Optional CSV of ALL substitutions ───────────────────────────────────
+    if save_table and not table.empty:
+        path = save_table_path or f"substitution_matrix_composition_normalized_{dataset}.csv"
+        table.to_csv(path, index=False)
+        print(f"  Saved full substitution table ({len(table)} cells) -> {path}")
+
+    # ── Printed summary (top significant cells) ─────────────────────────────
+    n_sig = int(table["significant"].sum()) if not table.empty else 0
+    print(f"\n── Composition-normalized substitution matrix ({dataset}) ──")
+    print(f"  Cells tested: {result['n_tested']}")
+    print(f"  Cells significant at FDR < 0.05: {n_sig}")
+    if n_sig > 0:
+        sig_df = table[table["significant"]].drop(columns=["significant", "pval"])
+        print("\n  Top composition-controlled group differences:")
+        print(sig_df.head(15).to_string(index=False))
+
+    return table, fig
+ 
+
+def result_to_table(result: dict) -> pd.DataFrame:
+    """Melt the enrichment result dict into the tidy per-substitution table
+    (from/to/obs_pos/obs_neg/exp_pos/exp_neg/ratio_pos/ratio_neg/log2_ratio_diff/pval/fdr/significant).
+    This is exactly the table build_score_table consumes."""
     # ── Build the full results table (all tested cells) ─────────────────────
     rows = []
     for aa_from in ORDERED_AA:
@@ -961,26 +985,9 @@ def plot_composition_normalized_matrix(
             table["log2_ratio_diff"].abs().sort_values(ascending=False).index
         ).reset_index(drop=True)
     # print(table)
-    print(f"  Save table: {save_table}")
-    print(f"  Table empty: {table.empty}")
-    # ── Optional CSV of ALL substitutions ───────────────────────────────────
-    if save_table and not table.empty:
-        path = table_path or f"substitution_matrix_composition_normalized_{dataset}.csv"
-        table.to_csv(path, index=False)
-        print(f"  Saved full substitution table ({len(table)} cells) -> {path}")
+    return table
 
-    # ── Printed summary (top significant cells) ─────────────────────────────
-    n_sig = int(table["significant"].sum()) if not table.empty else 0
-    print(f"\n── Composition-normalized substitution matrix ({dataset}) ──")
-    print(f"  Cells tested: {result['n_tested']}")
-    print(f"  Cells significant at FDR < 0.05: {n_sig}")
-    if n_sig > 0:
-        sig_df = table[table["significant"]].drop(columns=["significant", "pval"])
-        print("\n  Top composition-controlled group differences:")
-        print(sig_df.head(15).to_string(index=False))
 
-    return fig
- 
 # ════════════════════════════════════════════════════════════════════════════
 # One-call wrapper
 # ════════════════════════════════════════════════════════════════════════════
@@ -2397,7 +2404,7 @@ def run_mutability_normalized_analysis(
     rates_path: str = "/mnt/d/phd/scripts/16_ev_signature_predictor/data/samocha_mutation_rates/fordist_1KG_mutation_rate_table.txt",
     min_total: int = 5,
     dataset: str = "gnomad",
-    save: bool = True,
+    save_table: bool = True,
     save_table_path: str = None
 ) -> dict:
     """
@@ -2409,8 +2416,8 @@ def run_mutability_normalized_analysis(
     result = compute_composition_normalized_enrichment(
         df, region_by_id, min_total=min_total, rates=rates,   # pass-through
     )
-    plot_composition_normalized_matrix(result, dataset=f"{dataset}_mutability", save_table=save, table_path=save_table_path)
-    return result
+    table, fig = plot_composition_normalized_matrix(result, dataset=f"{dataset}_mutability", save_table=save_table, save_table_path=save_table_path)
+    return result, table
 
 # ════════════════════════════════════════════════════════════════════════════
 # Mutation-rate loading (Samocha 2014 trinucleotide model)
@@ -3076,3 +3083,110 @@ def plot_obs_exp_scatter_grouped(
     if save:
         save_figure(fig, "obs_exp_scatter_grouped", dataset=dataset)
     return d, fig
+
+
+# """
+# Substitution-spectrum scoring: group-specific, selection-corrected log2-odds
+# substitution matrix, built from the substitution-comparison dataframe.
+ 
+# Importable module. No CLI / no __main__ block.
+ 
+# Score per substitution a->b:
+#     score = log2((obs_pos + alpha)/exp_pos) - log2((obs_neg + alpha)/exp_neg)
+# Centered at 0: >0 enriched in positive (functional) group, <0 in negative.
+# """
+ 
+# import numpy as np
+# import pandas as pd
+# import matplotlib.pyplot as plt
+# from matplotlib.colors import TwoSlopeNorm
+ 
+ 
+def build_score_table(df, alpha=0.5, min_count=0, key_sep="->"):
+    """
+    Build the per-substitution score table.
+ 
+    df must contain: 'from','to','obs_pos','obs_neg','exp_pos','exp_neg'.
+    alpha     : pseudocount on observed counts (shrinks low-count scores -> 0).
+    min_count : drop substitutions with total obs count below this (0 = keep all).
+    key_sep   : separator for the lookup key, e.g. 'F->S'.
+ 
+    Returns (table, lookup):
+      table  : DataFrame indexed by key, cols [from,to,obs_pos,obs_neg,exp_pos,
+               exp_neg,total_count,score_raw,score]
+      lookup : dict {key -> score}  for Step 2
+    """
+    required = {"from", "to", "obs_pos", "obs_neg", "exp_pos", "exp_neg"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"dataframe is missing required columns: {sorted(missing)}")
+ 
+    t = df.copy()
+    eps = 1e-9
+    exp_pos = t["exp_pos"].clip(lower=eps)
+    exp_neg = t["exp_neg"].clip(lower=eps)
+ 
+    ratio_pos = (t["obs_pos"] + alpha) / exp_pos
+    ratio_neg = (t["obs_neg"] + alpha) / exp_neg
+    t["score"] = np.log2(ratio_pos) - np.log2(ratio_neg)
+ 
+    ratio_pos_raw = t["obs_pos"].clip(lower=eps) / exp_pos
+    ratio_neg_raw = t["obs_neg"].clip(lower=eps) / exp_neg
+    t["score_raw"] = np.log2(ratio_pos_raw) - np.log2(ratio_neg_raw)
+ 
+    t["total_count"] = t["obs_pos"] + t["obs_neg"]
+    t["key"] = t["from"].astype(str) + key_sep + t["to"].astype(str)
+ 
+    if min_count > 0:
+        t = t[t["total_count"] >= min_count].copy()
+ 
+    cols = ["key", "from", "to", "obs_pos", "obs_neg", "exp_pos", "exp_neg",
+            "total_count", "score_raw", "score"]
+    table = t[cols].set_index("key")
+    lookup = table["score"].to_dict()
+    return table, lookup
+ 
+ 
+def plot_score_heatmap(table, ax=None, aa_order=None, cmap="RdBu_r",
+                       annotate=False, title="Substitution score matrix"):
+    """
+    Quick diverging heatmap of the score matrix (source AA = rows, dest AA = cols).
+    Empty (unobserved) substitution cells are left blank.
+ 
+    table   : output of build_score_table (must have 'from','to','score').
+    aa_order: optional explicit ordering of amino acids on both axes.
+    annotate: write the score value in each cell.
+    Returns the matplotlib Axes.
+    """
+    mat = table.pivot_table(index="from", columns="to", values="score", aggfunc="mean")
+ 
+    if aa_order is not None:
+        rows = [a for a in aa_order if a in mat.index]
+        cols = [a for a in aa_order if a in mat.columns]
+        mat = mat.reindex(index=rows, columns=cols)
+ 
+    vmax = np.nanmax(np.abs(mat.values))
+    vmax = 1.0 if not np.isfinite(vmax) or vmax == 0 else vmax
+    norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+ 
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(max(4, 0.5*mat.shape[1]+2),
+                                        max(3, 0.5*mat.shape[0]+1)))
+    im = ax.imshow(mat.values, cmap=cmap, norm=norm, aspect="auto")
+    ax.set_xticks(range(mat.shape[1])); ax.set_xticklabels(mat.columns)
+    ax.set_yticks(range(mat.shape[0])); ax.set_yticklabels(mat.index)
+    ax.set_xlabel("to (destination AA)")
+    ax.set_ylabel("from (source AA)")
+    ax.set_title(title)
+    cbar = ax.figure.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("score  (<0 neg-enriched,  >0 pos-enriched)")
+ 
+    if annotate:
+        for i in range(mat.shape[0]):
+            for j in range(mat.shape[1]):
+                v = mat.values[i, j]
+                if np.isfinite(v):
+                    ax.text(j, i, f"{v:.1f}", ha="center", va="center",
+                            fontsize=7, color="black")
+    return ax
+ 

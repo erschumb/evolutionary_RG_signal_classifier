@@ -808,7 +808,17 @@ def compute_af_features_per_region(
     """
     df = df.copy()
     df["consequence_class"] = df["Consequence"].apply(collapse_consequence)
-
+    # ── Consistency fix: a variant with no allele-frequency data is not
+    # evidence for any feature, so drop NaN-AF rows ONCE here. This guarantees
+    # the count features and the frequency-spectrum features describe the
+    # SAME set of variants (previously counts included NaN-AF rows that the
+    # spectra silently excluded).
+    n_before = len(df)
+    df = df[df[af_col].notna()]
+    n_dropped = n_before - len(df)
+    if n_dropped:
+        print(f"  [af_features] dropped {n_dropped} variants with missing {af_col} "
+              f"({100*n_dropped/n_before:.1f}%) for feature-set consistency")
     feature_rows = []
     for (region_id, group), region_df in df.groupby(["region_id", "group"], sort=False):
         row = {"region_id": region_id, "group": group}
