@@ -1031,3 +1031,63 @@ def plot_gc_cpg_flux(merged, stats, dataset="gnomad", save=True,
     if save:
         save_figure(fig, "gc_cpg_flux", dataset=dataset)
     return fig
+
+
+
+ 
+def _gc3(dna: str) -> float:
+    """GC fraction at third codon positions (wobble). NaN if no complete codons."""
+    s = dna.upper()
+    thirds = s[2::3]                      # 3rd base of each codon
+    if len(thirds) == 0:
+        return np.nan
+    return (thirds.count("G") + thirds.count("C")) / len(thirds)
+ 
+ 
+def _mean_intrinsic_mutability(dna: str, cm: dict) -> float:
+    """Mean intrinsic mutability over the region's codons. NaN if none scorable."""
+    s = dna.upper()
+    vals = []
+    for i in range(0, len(s) - 2, 3):
+        c = s[i:i + 3]
+        aa = _CODON_TABLE.get(c)
+        if aa is None or aa == "*":
+            continue
+        if c in cm:
+            vals.append(cm[c])
+    return float(np.mean(vals)) if vals else np.nan
+ 
+ 
+def compute_gc_codon_indices_per_region(region_by_id: dict,
+                                        rates: dict = None) -> pd.DataFrame:
+    """
+    One row per region (keyed on region_id) with leak-free composition indices:
+        gc        : overall GC fraction
+        gc3       : GC fraction at 3rd codon positions (wobble bias)
+        cpg_frac  : CpG dinucleotide fraction
+        cpg_oe    : CpG observed/expected
+        codon_mean_mutability : mean intrinsic 1KG mutability over the region's
+                    codons (only if `rates` provided; else column omitted)
+ 
+    NaN where a metric is undefined (e.g. sequence too short). No label contrast.
+    """
+    cm = codon_intrinsic_mutability(rates) if rates is not None else None
+ 
+    rows = []
+    for rid, r in region_by_id.items():
+        dna = r.get("dna", "")
+        if not dna:
+            continue
+        gc, cpg_frac, cpg_oe = _seq_metrics(dna)
+        row = {
+            "region_id": rid,
+            "gc": gc,
+            "gc3": _gc3(dna),
+            "cpg_frac": cpg_frac,
+            "cpg_oe": cpg_oe,
+        }
+        if cm is not None:
+            row["codon_mean_mutability"] = _mean_intrinsic_mutability(dna, cm)
+        rows.append(row)
+    return pd.DataFrame(rows)
+ 

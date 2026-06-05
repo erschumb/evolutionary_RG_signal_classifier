@@ -2581,4 +2581,102 @@ def plot_delta_rg_ratio_per_region(
     print(f"  Mann-Whitney p = {p:.2e} {sig}")
  
     return fig, results
+
+
+_DROP_TO_AVOID_COLLISION = {"region_length"}
  
+ 
+def compute_rg_features_per_region(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+) -> pd.DataFrame:
+    """
+    One row per region (keyed on region_id) with all RG-specific features:
+ 
+      density        : n_rg_motifs, rg_fraction
+      burden         : rg_fraction_rgs_hit_<vt>, rg_mean_burden_on_hit_<vt>
+      R/G asymmetry  : n_r_hits_disrupting, n_g_hits_disrupting, rg_r_fraction
+      change events  : rg_event_fraction_<event>
+      delta RG ratio : delta_rg_ratio_rel_mean
+ 
+    RG change events are derived internally from df_rg + region_by_id (via
+    compute_rg_change_events), so the caller only supplies the two base inputs.
+ 
+    NaN policy: burden / asymmetry / event / delta columns are LEFT AS NaN when
+    a region has no relevant observation (e.g. no RG motif to hit, no RG-
+    disrupting missense). NaN means "no observation", which is distinct from a
+    real zero; the classifier handles missingness downstream. We never zero-fill.
+    """
+    # ── 1. density (single source of truth for anything length-derived) ──────
+    density = compute_region_rg_stats(region_by_id)[
+        ["region_id", "region_length", "n_rg_motifs", "rg_fraction"]
+    ]
+ 
+    # ── 2. burden, pivoted wide ──────────────────────────────────────────────
+    per_rg = compute_per_rg_burden(df_rg, region_by_id)
+    per_region_burden = compute_per_region_burden_stats(per_rg)
+    burden = per_region_burden.pivot_table(
+        index="region_id",                      # region_id only: it is unique
+        columns="variant_type",
+        values=["fraction_rgs_hit", "mean_burden_on_hit"],
+        aggfunc="first",
+    )
+    burden.columns = [f"rg_{metric}_{vt}" for metric, vt in burden.columns]
+    burden = burden.reset_index()
+ 
+    # ── 3. R vs G asymmetry (RG-disrupting missense only) ─────────────────────
+    r_g_sub = df_rg[
+        df_rg["is_rg_disrupting"].fillna(False)
+        & df_rg["Consequence"].fillna("").str.contains("missense_variant")
+        & df_rg["rg_role"].isin(["R", "G"])
+    ]
+    asym = (
+        r_g_sub.groupby(["region_id", "rg_role"]).size()
+               .unstack("rg_role", fill_value=0)
+               .reset_index()
+    )
+    for col in ("R", "G"):
+        if col not in asym.columns:
+            asym[col] = 0
+    denom = asym["R"] + asym["G"]
+    asym["rg_r_fraction"] = np.where(denom > 0, asym["R"] / denom, np.nan)
+    asym = asym.rename(columns={"R": "n_r_hits_disrupting",
+                                "G": "n_g_hits_disrupting"})
+    asym = asym[["region_id", "n_r_hits_disrupting",
+                 "n_g_hits_disrupting", "rg_r_fraction"]]
+ 
+    # ── 4. RG change events (fractions; NaN when no events) ──────────────────
+    #    derived internally from df_rg + region_by_id
+    df_events = compute_rg_change_events(df_rg, region_by_id)
+    ev = df_events[df_events["rg_change_event"].notna()]
+    ev_counts = (
+        ev.groupby(["region_id", "rg_change_event"]).size()
+          .unstack("rg_change_event", fill_value=0)
+          .reset_index()
+    )
+    for e in RG_EVENT_TYPES:
+        if e not in ev_counts.columns:
+            ev_counts[e] = 0
+    ev_total = ev_counts[RG_EVENT_TYPES].sum(axis=1).replace(0, np.nan)
+    for e in RG_EVENT_TYPES:
+        ev_counts[f"rg_event_fraction_{e}"] = ev_counts[e] / ev_total
+    events = ev_counts[["region_id"] + [f"rg_event_fraction_{e}" for e in RG_EVENT_TYPES]]
+ 
+    # ── 5. delta RG ratio (mean over missense; NaN when none) ────────────────
+    drg = compute_delta_rg_ratio(df_rg, region_by_id)
+    drg = drg[drg["delta_rg_ratio_rel"].notna()]
+    delta = (
+        drg.groupby("region_id")["delta_rg_ratio_rel"].mean()
+           .reset_index(name="delta_rg_ratio_rel_mean")
+    )
+ 
+    # ── 6. assemble — every merge on region_id ONLY (it is unique), left joins ─
+    out = density
+    for part in (burden, asym, events, delta):
+        out = out.merge(part, on="region_id", how="left")
+ 
+    # drop columns owned by other feature groups to avoid registry collisions
+    out = out.drop(columns=[c for c in _DROP_TO_AVOID_COLLISION if c in out.columns])
+    return out
+ 
+

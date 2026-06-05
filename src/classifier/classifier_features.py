@@ -313,14 +313,13 @@ def compute_delta_rg_ratio_per_region(
 # Codon usage features per region
 # ════════════════════════════════════════════════════════════════════════════
 
-def compute_codon_usage_features(region_by_id: dict) -> pd.DataFrame:
+def compute_codon_usage_features(region_by_id: dict, source_aas: list = None) -> pd.DataFrame:
     """
-    For each region and each multi-codon AA, compute fraction of that AA's
-    codons that are each specific codon. E.g. fraction of G codons that are
-    GGC, GGA, GGG, GGT.
-
-    Returns: one row per region with columns like 'codon_G_GGC', 'codon_G_GGA', ...
+    For each region and each multi-codon AA (optionally restricted to source_aas),
+    compute the fraction of that AA's codons that are each specific codon.
+    source_aas=None uses all multi-codon AAs.
     """
+    aas = MULTI_CODON_AA if source_aas is None else [a for a in source_aas if a in MULTI_CODON_AA]
     rows = []
     for rid, r in region_by_id.items():
         dna = r.get("dna", "")
@@ -328,8 +327,7 @@ def compute_codon_usage_features(region_by_id: dict) -> pd.DataFrame:
             continue
         row = {"region_id": rid, "group": r["group"]}
         codons = [dna[i:i + 3].upper() for i in range(0, len(dna), 3)]
-
-        for aa in MULTI_CODON_AA:
+        for aa in aas:                      # <-- was MULTI_CODON_AA
             aa_codons = _AA_TO_CODONS[aa]
             counts = {c: 0 for c in aa_codons}
             for codon in codons:
@@ -337,11 +335,8 @@ def compute_codon_usage_features(region_by_id: dict) -> pd.DataFrame:
                     counts[codon] += 1
             total = sum(counts.values())
             for c in aa_codons:
-                row[f"codon_{aa}_{c}"] = (
-                    counts[c] / total if total > 0 else np.nan
-                )
+                row[f"codon_{aa}_{c}"] = counts[c] / total if total > 0 else np.nan
         rows.append(row)
-
     return pd.DataFrame(rows)
 
 

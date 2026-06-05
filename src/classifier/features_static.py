@@ -23,12 +23,20 @@ import pandas as pd
 from src.classifier.classifier_features import compute_alphamissense_per_region   # <-- adjust path
 from src.classifier.classifier_features import compute_consequence_per_region   # <-- adjust path
 from src.analysis_visualization.af_spectrum import compute_af_features_per_region
-from src.classifier.classifier_features import compute_esm_per_region   
+from src.classifier.classifier_features import compute_esm_per_region
+from src.analysis_visualization.rg_analysis import compute_rg_features_per_region
+from src.analysis_visualization.physchem_analysis import (compute_physchem_deltas,            # <-- adjust path
+                               aggregate_per_region,
+                               compute_wt_physchem_features)
+from src.classifier.classifier_features import compute_codon_usage_features              # <-- adjust path
+from src.analysis_visualization.codon_usage import compute_gc_codon_indices_per_region
 # ... future static features get imported here from their own modules ...
-# from codon_analysis import compute_codon_features_per_region
-# from physchem import compute_physchem_per_region
+ 
+#  Cache path for the expensive physchem-delta computation.
+_PHYSCHEM_DELTA_CACHE = (
+    "/mnt/d/phd/scripts/16_ev_signature_predictor/data/processed/physchem_deltas.parquet"
+)
 # ---------------------------------------------------------------------------
-
  
 JOIN_KEY = "region_id"
  
@@ -54,17 +62,52 @@ def _set_index(df: pd.DataFrame) -> pd.DataFrame:
     return df
  
  
-def build_static_features(df_rg: pd.DataFrame, df_esm: pd.DataFrame = None) -> pd.DataFrame:
+def _load_or_compute_physchem_deltas(df_rg, region_by_id, cache_path):
+    """Load cached physchem deltas if present, else compute and save them.
+    compute_physchem_deltas is expensive, so we avoid recomputing per call."""
+    if cache_path:
+        try:
+            return pd.read_parquet(cache_path)
+        except (FileNotFoundError, OSError):
+            pass
+    deltas = compute_physchem_deltas(df_rg, region_by_id)
+    if cache_path:
+        try:
+            deltas.to_parquet(cache_path)
+        except OSError:
+            pass  # caching is best-effort; don't fail the build if write fails
+    return deltas
+ 
+ 
+def build_static_features(df_rg: pd.DataFrame, region_by_id: dict = None,
+                          df_esm: pd.DataFrame = None,
+                          include_wt_physchem: bool = True,
+                          codon_source_aas: list = None,
+                          include_gc_codon_indices: bool = True,
+                          codon_rates: dict = None,
+                          physchem_delta_cache: str = _PHYSCHEM_DELTA_CACHE) -> pd.DataFrame:
     """
     Assemble ALL fold-static features into one matrix keyed on region_id.
  
     Parameters
     ----------
-    df_rg : variant-level dataframe (one row per variant), the same input the
-            individual builders expect.
-    df_esm : optional variant-level dataframe with the esm_llr column. If None,
-            the ESM feature group is skipped (matching the orchestrator's
-            conditional behavior).
+    df_rg : variant-level dataframe (one row per variant).
+    region_by_id : dict of region metadata; required for the RG, physchem-delta,
+            WT-physchem, and codon-usage groups. If None, those groups are skipped.
+    df_esm : optional variant-level dataframe with esm_llr. If None, ESM skipped.
+    include_wt_physchem : if False, the WT (baseline-sequence) physchem group is
+            omitted. Flip to False for the with/without-WT ablation, since WT
+            physchem is the strongest potential baseline-composition label proxy.
+    codon_source_aas : list of amino-acid letters whose codon-usage fractions to
+            include (e.g. list("RG") or list("ADEGLPRS")). None = all multi-codon
+            AAs (~50+ collinear columns; usually too many). Restrict to the
+            biologically-relevant set to keep dimensionality and importance sane.
+    include_gc_codon_indices : if False, omit the GC/GC3/CpG/mutability scalar
+            index group. (ENC and CAI are intentionally excluded entirely.)
+    codon_rates : optional 1KG mutation-rate dict; if provided, the GC-codon
+            group adds a mean intrinsic codon-mutability column.
+    physchem_delta_cache : parquet path for the expensive physchem-delta result;
+            loaded if present, otherwise recomputed and saved.
  
     Returns
     -------
@@ -101,7 +144,59 @@ def build_static_features(df_rg: pd.DataFrame, df_esm: pd.DataFrame = None) -> p
         esm = _set_index(esm)
         parts.append(esm)
  
-    # 5) future static feature groups append here, each keyed on region_id:
+    # 5) RG-specific features: density, burden, R/G asymmetry, change events,
+    #    delta RG ratio (imported, not reimplemented). Derives RG change events
+    #    internally from df_rg + region_by_id. region_length is dropped inside
+    #    the builder to avoid colliding with the consequence group's copy.
+    if region_by_id is not None:
+        rg = compute_rg_features_per_region(df_rg, region_by_id)
+        rg = _strip_label_cols(rg)
+        rg = _set_index(rg)
+        parts.append(rg)
+ 
+    # 6) physchem DELTAS: per-region mean shift in biophysical properties across
+    #    missense variants (variant-driven; on-narrative for selection). Derived
+    #    from df_rg + region_by_id, cached to parquet (expensive to recompute).
+    if region_by_id is not None:
+        deltas_df = _load_or_compute_physchem_deltas(df_rg, region_by_id,
+                                                     physchem_delta_cache)
+        pc_delta = aggregate_per_region(deltas_df)
+        pc_delta = _strip_label_cols(pc_delta)
+        pc_delta = _set_index(pc_delta)
+        parts.append(pc_delta)
+ 
+    # 7) WT physchem: baseline sequence properties (no variants). OPTIONAL —
+    #    this is the strongest potential baseline-composition label proxy, so it
+    #    is toggleable for the with/without-WT ablation. Also note wt_* charge
+    #    features correlate with the RG-density group (both track R/G content).
+    if include_wt_physchem and region_by_id is not None:
+        wt = compute_wt_physchem_features(region_by_id)
+        wt = _strip_label_cols(wt)
+        wt = _set_index(wt)
+        parts.append(wt)
+ 
+    # 8) codon-usage fractions per region (leak-free: pure-sequence, no label
+    #    contrast). Restricted to codon_source_aas to control dimensionality;
+    #    within each AA the fractions sum to 1 (one column redundant by design).
+    #    Same baseline-composition label-proxy caveat as WT physchem.
+    if region_by_id is not None:
+        codon = compute_codon_usage_features(region_by_id, source_aas=codon_source_aas)
+        codon = _strip_label_cols(codon)
+        codon = _set_index(codon)
+        parts.append(codon)
+ 
+    # 9) GC / codon composition indices: gc, gc3 (wobble), cpg_frac, cpg_oe, and
+    #    (if codon_rates given) mean intrinsic codon mutability. Compact scalar
+    #    summaries complementing the codon fractions; leak-free, fold-static.
+    #    Toggleable. ENC/CAI intentionally excluded (noisy at short lengths /
+    #    off-narrative).
+    if include_gc_codon_indices and region_by_id is not None:
+        gci = compute_gc_codon_indices_per_region(region_by_id, rates=codon_rates)
+        gci = _strip_label_cols(gci)
+        gci = _set_index(gci)
+        parts.append(gci)
+ 
+    # 10) future static feature groups append here, each keyed on region_id:
     # codon = compute_codon_features_per_region(df_rg); parts.append(_set_index(_strip_label_cols(codon)))
     # phys  = compute_physchem_per_region(df_rg);       parts.append(_set_index(_strip_label_cols(phys)))
  
