@@ -24,7 +24,7 @@ import pysam
 from Bio.Seq import Seq
 
 # Import dataclasses from build script
-from build_mane_index import CDSExon, TranscriptCDS  # noqa: F401
+from src.build_mane_index import CDSExon, TranscriptCDS  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

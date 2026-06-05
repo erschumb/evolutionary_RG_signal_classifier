@@ -26,8 +26,8 @@ from src.analysis_visualization.af_spectrum import compute_af_features_per_regio
 from src.classifier.classifier_features import compute_esm_per_region
 from src.analysis_visualization.rg_analysis import compute_rg_features_per_region
 from src.analysis_visualization.physchem_analysis import (compute_physchem_deltas,            # <-- adjust path
-                               aggregate_per_region,
-                               compute_wt_physchem_features)
+                               aggregate_per_region)
+from src.classifier.classifier_features import compute_wt_physchem_features              # <-- adjust path
 from src.classifier.classifier_features import compute_codon_usage_features              # <-- adjust path
 from src.analysis_visualization.codon_usage import compute_gc_codon_indices_per_region
 # ... future static features get imported here from their own modules ...
