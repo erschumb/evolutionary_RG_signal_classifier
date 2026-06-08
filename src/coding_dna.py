@@ -95,23 +95,30 @@ def sanity_check_chromosomes(index: Dict[str, TranscriptCDS],
 # CDS fetch + AA->interval math
 # ---------------------------------------------------------------------------
 
-def _translate_full_cds(tx: TranscriptCDS, fasta: pysam.FastaFile,
-                       cds_cache: Optional[Dict[str, str]] = None) -> str:
-    """Translate the entire CDS into protein (without trailing stop)."""
+def _translate_full_cds(tx, fasta, cds_cache=None):
+    """Translate the entire CDS into protein (without trailing stop).
+    Returns None if the CDS could not be fetched (e.g. contig not in FASTA)."""
     if cds_cache is not None and tx.transcript_id in cds_cache:
         cds_concat = cds_cache[tx.transcript_id]
     else:
         cds_concat = _fetch_cds_concat(tx, fasta)
         if cds_cache is not None:
             cds_cache[tx.transcript_id] = cds_concat
-    prot = str(Seq(cds_concat).translate())
-    return prot.rstrip("*")  # strip stop codon if present
+
+    # _fetch_cds_concat returns (None, reason) on failure (e.g. alt/fix contig)
+    if not isinstance(cds_concat, str):
+        return None
+
+    prot = str(Seq(cds_concat).translate())   # cds_concat is now guaranteed str
+    return prot.rstrip("*")
 
 def _fetch_cds_concat(tx: TranscriptCDS, fasta: pysam.FastaFile) -> str:
     """Concatenate CDS exons in transcription order."""
     parts = []
     for ex in tx.exons:
         # pysam uses 0-based half-open; GFF is 1-based inclusive
+        if ex.chrom not in fasta.references:          # contig not in primary assembly
+            return None, f"contig_not_in_fasta:{ex.chrom}"
         seq = fasta.fetch(ex.chrom, ex.g_start - 1, ex.g_end).upper()
         if tx.strand == "-":
             seq = str(Seq(seq).reverse_complement())
@@ -248,8 +255,10 @@ def get_exact_dna(
 
     realigned_from = None
     if needs_realign:
-        # Search for region_seq in the full MANE protein
         mane_prot = _translate_full_cds(tx, fasta, cds_cache)
+        if mane_prot is None:
+            # CDS unfetchable (alt/fix contig) — can't realign; treat as failure
+            return None, "realign_cds_unfetchable"
         positions = []
         idx = mane_prot.find(region_seq)
         while idx != -1:

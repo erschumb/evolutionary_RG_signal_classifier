@@ -206,17 +206,66 @@ def _parse_protein_position(pos_str) -> int | None:
     except ValueError:
         return None
     
+# def load_and_merge_frequencies(
+#     df_assigned: pd.DataFrame,
+#     pos_tsv_path: str,
+#     neg_tsv_path: str,
+# ) -> pd.DataFrame:
+#     """
+#     Load allele frequency TSVs from your earlier joint VCF extraction and
+#     merge them onto df_assigned by CHROM+POS+REF+ALT.
+
+#     Note: these TSVs may be incomplete relative to the current df_assigned
+#     (different BED files used). Variants without a match get NaN for AF fields.
+#     """
+#     af_cols_to_keep = [
+#         "CHROM", "POS", "REF", "ALT",
+#         "AC_joint", "AN_joint", "AF_joint",
+#         "AC_genomes", "AN_genomes", "AF_genomes",
+#         "AC_exomes", "AN_exomes", "AF_exomes",
+#         "grpmax_joint",
+#         "AF_joint_afr", "AF_joint_amr", "AF_joint_asj", "AF_joint_eas",
+#         "AF_joint_fin", "AF_joint_nfe", "AF_joint_mid", "AF_joint_sas",
+#         "AF_joint_remaining",
+#     ]
+
+#     pos_df = pd.read_csv(pos_tsv_path, sep="\t", low_memory=False,
+#                          usecols=af_cols_to_keep)
+#     neg_df = pd.read_csv(neg_tsv_path, sep="\t", low_memory=False,
+#                          usecols=af_cols_to_keep)
+
+#     print(f"Loaded {len(pos_df):,} pos rows, {len(neg_df):,} neg rows")
+
+#     # Combine and deduplicate (a variant could appear in both if regions overlap)
+#     af_df = pd.concat([pos_df, neg_df], ignore_index=True)
+#     af_df = af_df.drop_duplicates(subset=["CHROM", "POS", "REF", "ALT"])
+#     print(f"After dedup: {len(af_df):,} unique variants with AF data")
+
+#     # Merge onto df_assigned
+#     merged = df_assigned.merge(
+#         af_df,
+#         on=["CHROM", "POS", "REF", "ALT"],
+#         how="left",
+#     )
+
+#     n_with_af = merged["AF_joint"].notna().sum()
+#     n_total   = len(merged)
+#     print(f"Merge coverage: {n_with_af:,} / {n_total:,} rows have AF "
+#           f"({n_with_af/n_total:.1%})")
+
+#     return merged
+
 def load_and_merge_frequencies(
     df_assigned: pd.DataFrame,
-    pos_tsv_path: str,
-    neg_tsv_path: str,
+    af_tsv_path: str,
 ) -> pd.DataFrame:
     """
-    Load allele frequency TSVs from your earlier joint VCF extraction and
-    merge them onto df_assigned by CHROM+POS+REF+ALT.
+    Load allele frequencies from the joint gnomAD v4.1 extraction (single
+    combined TSV, extracted over the same combined 4-group BED used for the
+    VEP consequence annotation) and merge onto df_assigned by
+    CHROM+POS+REF+ALT.
 
-    Note: these TSVs may be incomplete relative to the current df_assigned
-    (different BED files used). Variants without a match get NaN for AF fields.
+    Variants without a match get NaN for AF fields.
     """
     af_cols_to_keep = [
         "CHROM", "POS", "REF", "ALT",
@@ -228,31 +277,32 @@ def load_and_merge_frequencies(
         "AF_joint_fin", "AF_joint_nfe", "AF_joint_mid", "AF_joint_sas",
         "AF_joint_remaining",
     ]
+    af_df = pd.read_csv(af_tsv_path, sep="\t", low_memory=False,
+                        usecols=af_cols_to_keep)
+    print(f"Loaded {len(af_df):,} AF rows")
 
-    pos_df = pd.read_csv(pos_tsv_path, sep="\t", low_memory=False,
-                         usecols=af_cols_to_keep)
-    neg_df = pd.read_csv(neg_tsv_path, sep="\t", low_memory=False,
-                         usecols=af_cols_to_keep)
-
-    print(f"Loaded {len(pos_df):,} pos rows, {len(neg_df):,} neg rows")
-
-    # Combine and deduplicate (a variant could appear in both if regions overlap)
-    af_df = pd.concat([pos_df, neg_df], ignore_index=True)
+    # Dedup on variant key: overlapping BED windows can emit the same variant
+    # more than once from `bcftools view -R`.
     af_df = af_df.drop_duplicates(subset=["CHROM", "POS", "REF", "ALT"])
     print(f"After dedup: {len(af_df):,} unique variants with AF data")
 
-    # Merge onto df_assigned
     merged = df_assigned.merge(
         af_df,
         on=["CHROM", "POS", "REF", "ALT"],
         how="left",
     )
 
+    # Guard against fan-out: left-merge against a right side with duplicate
+    # keys would multiply rows. Dedup above should prevent it; assert it held.
+    assert len(merged) == len(df_assigned), (
+        f"Merge changed row count: {len(df_assigned):,} -> {len(merged):,}. "
+        "af_df still has duplicate keys."
+    )
+
     n_with_af = merged["AF_joint"].notna().sum()
     n_total   = len(merged)
     print(f"Merge coverage: {n_with_af:,} / {n_total:,} rows have AF "
           f"({n_with_af/n_total:.1%})")
-
     return merged
 
 def parse_amino_acids_column(df: pd.DataFrame) -> pd.DataFrame:

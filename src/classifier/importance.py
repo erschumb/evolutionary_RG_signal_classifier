@@ -39,7 +39,7 @@ def group_permutation_importance(
     train set, then on the held-out set, permute each group's columns (n_repeats
     times) and measure the AUC drop vs unpermuted. Importance = mean AUC drop
     across folds & repeats. Larger drop = group more important.
-
+ 
     Returns a DataFrame: group, importance_mean, importance_std, baseline_auc.
     """
     include_groups = list(include_groups or [g for g in FEATURE_GROUPS
@@ -47,11 +47,11 @@ def group_permutation_importance(
     static_cols = columns_for_groups(include_groups, X_static.columns)
     region_ids = X_static.index
     y = y.reindex(region_ids); groups = groups.reindex(region_ids)
-
+ 
     Xs = X_static[static_cols].copy()
     Xs, _ = _prune_correlated(Xs, corr_threshold)
     static_cols = list(Xs.columns)
-
+ 
     # map each surviving column to its group (for permuting whole groups)
     col_group = {}
     for g in include_groups:
@@ -59,13 +59,13 @@ def group_permutation_importance(
             if c in static_cols:
                 col_group[c] = g
     present_groups = sorted(set(col_group.values()))
-
+ 
     cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True,
                               random_state=random_state)
     rng = np.random.default_rng(random_state)
     drops = {g: [] for g in present_groups}
     baselines = []
-
+ 
     for tr, te in cv.split(Xs.values, y.values, groups.values):
         imp = SimpleImputer(strategy="median")
         Xtr = imp.fit_transform(Xs.iloc[tr].values)
@@ -75,7 +75,7 @@ def group_permutation_importance(
         rf.fit(Xtr, y.values[tr])
         base = roc_auc_score(y.values[te], rf.predict_proba(Xte)[:, 1])
         baselines.append(base)
-
+ 
         col_idx = {c: i for i, c in enumerate(static_cols)}
         for g in present_groups:
             gcols = [col_idx[c] for c in static_cols if col_group[c] == g]
@@ -86,7 +86,7 @@ def group_permutation_importance(
                 Xperm[:, gcols] = Xperm[np.ix_(perm, gcols)]
                 a = roc_auc_score(y.values[te], rf.predict_proba(Xperm)[:, 1])
                 drops[g].append(base - a)
-
+ 
     rows = [{"group": g,
              "importance_mean": float(np.mean(drops[g])),
              "importance_std": float(np.std(drops[g]))}
@@ -94,8 +94,8 @@ def group_permutation_importance(
     out = pd.DataFrame(rows).sort_values("importance_mean", ascending=False)
     out["baseline_auc"] = float(np.mean(baselines))
     return out.reset_index(drop=True)
-
-
+ 
+ 
 def fit_full_model_for_shap(X_static, y, include_groups=None, *,
                             n_trees=300, random_state=42, corr_threshold=0.95):
     """Fit ONE RF on all data (static matrix) for SHAP. Returns (rf, X_imputed_df,
@@ -112,8 +112,8 @@ def fit_full_model_for_shap(X_static, y, include_groups=None, *,
     rf.fit(Xi, y.reindex(X_static.index).values)
     Xi_df = pd.DataFrame(Xi, columns=list(Xs.columns), index=X_static.index)
     return rf, Xi_df, list(Xs.columns), imp
-
-
+ 
+ 
 def shap_importance(rf, Xi_df, max_display=20):
     """Compute SHAP values (TreeExplainer) and return (shap_values, summary_df).
     Requires the `shap` package. summary_df ranks features by mean|SHAP|."""
@@ -127,8 +127,8 @@ def shap_importance(rf, Xi_df, max_display=20):
                .sort_values("mean_abs_shap", ascending=False)
                .reset_index(drop=True))
     return sv1, summary
-
-
+ 
+ 
 # ── plotting ────────────────────────────────────────────────────────────────
 def plot_group_importance(gpi_df, ax=None, color="#4C72B0"):
     """Horizontal bar chart of group permutation importance (mean AUC drop)."""
@@ -149,15 +149,15 @@ def plot_group_importance(gpi_df, ax=None, color="#4C72B0"):
         ax.spines[s].set_visible(False)
     fig.tight_layout()
     return fig
-
-
+ 
+ 
 def plot_shap_summary(shap_values, Xi_df, max_display=20):
     """Standard SHAP beeswarm summary (needs shap installed)."""
     import shap, matplotlib.pyplot as plt
     shap.summary_plot(shap_values, Xi_df, max_display=max_display, show=False)
     return plt.gcf()
-
-
+ 
+ 
 def plot_shap_bar(summary_df, max_display=20, ax=None, color="#55A868"):
     """Mean|SHAP| bar chart from the summary_df (no shap dependency for plotting)."""
     import matplotlib.pyplot as plt
@@ -174,3 +174,94 @@ def plot_shap_bar(summary_df, max_display=20, ax=None, color="#55A868"):
         ax.spines[s].set_visible(False)
     fig.tight_layout()
     return fig
+ 
+ 
+def _feature_to_group_map(features):
+    """Map each feature name to its FEATURE_GROUPS group (or 'ungrouped')."""
+    col2grp = {}
+    for g, cols in FEATURE_GROUPS.items():
+        for c in cols:
+            col2grp[c] = g
+    return {f: col2grp.get(f, "ungrouped") for f in features}
+ 
+ 
+def plot_shap_bar_by_group(summary_df, max_display=20, ax=None,
+                           group_colors=None, sort=True):
+    """
+    Mean|SHAP| bar chart with bars COLORED BY FEATURE GROUP + a legend.
+ 
+    summary_df : output of shap_importance (cols: feature, mean_abs_shap).
+    group_colors : optional {group_name -> color}; else a palette is assigned.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+ 
+    d = summary_df.copy()
+    if sort:
+        d = d.sort_values("mean_abs_shap", ascending=False)
+    d = d.head(max_display).copy()
+ 
+    f2g = _feature_to_group_map(d["feature"])
+    d["group"] = d["feature"].map(f2g)
+ 
+    # assign colors per group (only groups present in the displayed features)
+    present = list(dict.fromkeys(d["group"]))  # preserve first-seen order
+    if group_colors is None:
+        cmap = plt.cm.tab20(np.linspace(0, 1, max(len(present), 1)))
+        group_colors = {g: cmap[i] for i, g in enumerate(present)}
+    bar_colors = [group_colors[g] for g in d["group"]]
+ 
+    d = d.iloc[::-1]  # largest at top after barh
+    bar_colors = bar_colors[::-1]
+ 
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, max(3, 0.4 * len(d))))
+    else:
+        fig = ax.figure
+    ax.barh(d["feature"], d["mean_abs_shap"], color=bar_colors,
+            edgecolor="black", linewidth=0.4)
+    ax.set_xlabel("mean |SHAP value|")
+    ax.set_title("Feature importance (SHAP), colored by feature group")
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+ 
+    # legend: one entry per group present, in original ranking order
+    handles = [Patch(facecolor=group_colors[g], edgecolor="black",
+                     linewidth=0.4, label=g) for g in present]
+    ax.legend(handles=handles, title="feature group", fontsize=8,
+              title_fontsize=9, loc="lower right", frameon=False)
+    fig.tight_layout()
+    return fig, group_colors
+ 
+ 
+def plot_shap_beeswarm_grouped(shap_values, Xi_df, summary_df=None,
+                               max_display=20, group_colors=None):
+    """
+    SHAP beeswarm but with y-axis feature labels COLORED by group + a group
+    legend. Dot colors still encode feature VALUE (standard SHAP); the group
+    info is conveyed via the tick-label colors and legend.
+    """
+    import shap, matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+ 
+    shap.summary_plot(shap_values, Xi_df, max_display=max_display, show=False)
+    fig = plt.gcf(); ax = plt.gca()
+ 
+    f2g = _feature_to_group_map(Xi_df.columns)
+    # the y tick labels are feature names (top feature at top)
+    labels = [t.get_text() for t in ax.get_yticklabels()]
+    present = list(dict.fromkeys(f2g[l] for l in labels if l in f2g))
+    if group_colors is None:
+        cmap = plt.cm.tab20(np.linspace(0, 1, max(len(present), 1)))
+        group_colors = {g: cmap[i] for i, g in enumerate(present)}
+    for t in ax.get_yticklabels():
+        g = f2g.get(t.get_text())
+        if g in group_colors:
+            t.set_color(group_colors[g])
+            t.set_fontweight("bold")
+    handles = [Patch(facecolor=group_colors[g], label=g) for g in present]
+    ax.legend(handles=handles, title="feature group", fontsize=8,
+              title_fontsize=11, loc="center left", bbox_to_anchor=(-1, 0.5), frameon=False)
+    fig.tight_layout()
+    return fig, group_colors
+ 

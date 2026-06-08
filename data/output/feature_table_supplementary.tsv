@@ -1,0 +1,128 @@
+feature	group	description	dropped_by_pruning	mean_abs_shap	perm_importance_auc	perm_importance_std
+af_am_score_weighted_by_rarity	am_af_interaction	AlphaMissense score weighted by variant rarity.	FALSE	0.026424182	1.67E-17	3.96E-17
+af_frac_common_indel	allele_frequency	Common-variant fraction among indel variants.	FALSE	7.53E-06	1.05E-16	2.42E-17
+af_frac_common_lof	allele_frequency	Common-variant fraction among lof variants.	FALSE	0	0	0
+af_frac_common_mis	allele_frequency	Common-variant fraction among missense variants.	FALSE	0.000389792	1.11E-17	3.33E-17
+af_frac_common_syn	allele_frequency	Common-variant fraction among synonymous variants.	FALSE	0.000461296	0	0
+af_frac_rare_delta_mis_syn	allele_frequency	Missense-minus-synonymous shift in rare-variant fraction.	FALSE	0.00215215	5.55E-18	2.42E-17
+af_frac_singleton_indel	allele_frequency	Singleton fraction among indel variants.	FALSE	0.000305595	1.11E-17	3.33E-17
+af_frac_singleton_lof	allele_frequency	Singleton fraction among lof variants.	FALSE	0.000500535	1.67E-17	3.96E-17
+af_frac_singleton_mis	allele_frequency	Singleton fraction among missense variants.	FALSE	0.002227988	5.55E-18	2.42E-17
+af_frac_singleton_syn	allele_frequency	Singleton fraction among synonymous variants.	FALSE	0.001806531	1.11E-17	3.33E-17
+af_log2ratio_lof_syn_count	allele_frequency	Log2 LoF:synonymous count ratio.	FALSE	0.004930206	0	0
+af_log2ratio_mis_syn_count	allele_frequency	Log2 missense:synonymous count ratio.	FALSE	0.002100489	1.67E-17	3.96E-17
+af_median_log10_delta_mis_syn	allele_frequency	Missense-minus-synonymous shift in median log10 AF.	FALSE	0.002374588	1.11E-17	3.33E-17
+af_median_log10_indel	allele_frequency	Median log10 AF of indel variants.	FALSE	0.001449185	5.55E-18	2.42E-17
+af_median_log10_lof	allele_frequency	Median log10 AF of LoF variants.	FALSE	0.002670223	1.11E-17	3.33E-17
+af_median_log10_mis	allele_frequency	Median log10 AF of missense variants.	FALSE	0.002583564	1.11E-17	3.33E-17
+af_median_log10_syn	allele_frequency	Median log10 AF of synonymous variants.	FALSE	0.00209696	5.55E-18	2.42E-17
+af_n_indel	allele_frequency	Count of indel variants with allele frequency.	FALSE	0.002463241	2.22E-17	4.44E-17
+af_n_likely_path_rare	am_af_interaction	Count of rare likely-pathogenic variants.	FALSE	0	0	0
+af_n_lof	allele_frequency	Count of LoF variants with allele frequency.	TRUE			
+af_n_mis	allele_frequency	Count of missense variants with allele frequency.	TRUE			
+af_n_syn	allele_frequency	Count of synonymous variants with allele frequency.	FALSE	0.002235358	5.55E-18	2.42E-17
+af_rg_frac_singleton	allele_frequency	Singleton fraction among RG-motif variants.	FALSE	0.001263991	5.55E-18	2.42E-17
+af_rg_median_log10	allele_frequency	Median log10 AF of RG-motif variants.	FALSE	0.002238277	1.67E-17	3.96E-17
+af_rg_n_variants	allele_frequency	Variants falling within RG motifs (with AF).	FALSE	0.00225436	1.67E-17	3.96E-17
+af_rg_vs_nonrg_log10_delta_mis	allele_frequency	RG-vs-non-RG shift in median log10 missense AF.	FALSE	0.004078072	1.67E-17	3.96E-17
+am_fraction_pathogenic	alphamissense	Fraction of missense classed pathogenic by AlphaMissense.	TRUE			
+am_max	alphamissense	Maximum AlphaMissense pathogenicity.	FALSE	0.024075496	1.67E-17	3.96E-17
+am_mean	alphamissense	Mean AlphaMissense pathogenicity.	TRUE			
+am_median	alphamissense	Median AlphaMissense pathogenicity (missense).	TRUE			
+am_std	alphamissense	SD of AlphaMissense pathogenicity.	FALSE	0.020951576	2.78E-17	4.81E-17
+codon_A_GCA	codon_usage	Usage fraction of codon GCA for A within the region.	FALSE	0.003840243	1.67E-17	3.96E-17
+codon_A_GCC	codon_usage	Usage fraction of codon GCC for A within the region.	FALSE	0.001819327	5.55E-18	2.42E-17
+codon_A_GCG	codon_usage	Usage fraction of codon GCG for A within the region.	FALSE	0.004164633	1.67E-17	3.96E-17
+codon_A_GCT	codon_usage	Usage fraction of codon GCT for A within the region.	FALSE	0.000625044	1.67E-17	3.96E-17
+codon_D_GAC	codon_usage	Usage fraction of codon GAC for D within the region.	FALSE	0.001021004	5.55E-18	2.42E-17
+codon_D_GAT	codon_usage	Usage fraction of codon GAT for D within the region.	TRUE			
+codon_E_GAA	codon_usage	Usage fraction of codon GAA for E within the region.	TRUE			
+codon_E_GAG	codon_usage	Usage fraction of codon GAG for E within the region.	FALSE	0.001970781	1.67E-17	3.96E-17
+codon_G_GGA	codon_usage	Usage fraction of codon GGA for G within the region.	FALSE	0.005534763	5.55E-18	2.42E-17
+codon_G_GGC	codon_usage	Usage fraction of codon GGC for G within the region.	FALSE	0.0020145	5.55E-18	2.42E-17
+codon_G_GGG	codon_usage	Usage fraction of codon GGG for G within the region.	FALSE	0.007796426	5.55E-18	2.42E-17
+codon_G_GGT	codon_usage	Usage fraction of codon GGT for G within the region.	FALSE	0.008957615	1.11E-17	3.33E-17
+codon_L_CTA	codon_usage	Usage fraction of codon CTA for L within the region.	FALSE	0.00015265	2.78E-17	4.81E-17
+codon_L_CTC	codon_usage	Usage fraction of codon CTC for L within the region.	FALSE	0.002110491	5.55E-18	2.42E-17
+codon_L_CTG	codon_usage	Usage fraction of codon CTG for L within the region.	FALSE	0.001569926	1.11E-17	3.33E-17
+codon_L_CTT	codon_usage	Usage fraction of codon CTT for L within the region.	FALSE	0.000830392	1.67E-17	3.96E-17
+codon_L_TTA	codon_usage	Usage fraction of codon TTA for L within the region.	FALSE	0.000135714	2.22E-17	4.44E-17
+codon_L_TTG	codon_usage	Usage fraction of codon TTG for L within the region.	FALSE	0.000234158	3.33E-17	5.09E-17
+codon_P_CCA	codon_usage	Usage fraction of codon CCA for P within the region.	FALSE	0.000683566	2.22E-17	4.44E-17
+codon_P_CCC	codon_usage	Usage fraction of codon CCC for P within the region.	FALSE	0.001311837	2.22E-17	4.44E-17
+codon_P_CCG	codon_usage	Usage fraction of codon CCG for P within the region.	FALSE	0.000783974	1.67E-17	3.96E-17
+codon_P_CCT	codon_usage	Usage fraction of codon CCT for P within the region.	FALSE	0.000939866	5.55E-18	2.42E-17
+codon_R_AGA	codon_usage	Usage fraction of codon AGA for R within the region.	FALSE	0.0032197	5.55E-18	2.42E-17
+codon_R_AGG	codon_usage	Usage fraction of codon AGG for R within the region.	FALSE	0.00127958	2.78E-17	4.81E-17
+codon_R_CGA	codon_usage	Usage fraction of codon CGA for R within the region.	FALSE	0.003088157	1.67E-17	3.96E-17
+codon_R_CGC	codon_usage	Usage fraction of codon CGC for R within the region.	FALSE	0.00140155	1.67E-17	3.96E-17
+codon_R_CGG	codon_usage	Usage fraction of codon CGG for R within the region.	FALSE	0.00295189	1.11E-17	3.33E-17
+codon_R_CGT	codon_usage	Usage fraction of codon CGT for R within the region.	FALSE	0.001945403	0	0
+codon_S_AGC	codon_usage	Usage fraction of codon AGC for S within the region.	FALSE	0.001065947	1.67E-17	3.96E-17
+codon_S_AGT	codon_usage	Usage fraction of codon AGT for S within the region.	FALSE	0.001226611	1.11E-17	3.33E-17
+codon_S_TCA	codon_usage	Usage fraction of codon TCA for S within the region.	FALSE	0.000827228	2.22E-17	4.44E-17
+codon_S_TCC	codon_usage	Usage fraction of codon TCC for S within the region.	FALSE	0.00050785	1.67E-17	3.96E-17
+codon_S_TCG	codon_usage	Usage fraction of codon TCG for S within the region.	FALSE	0.000463623	1.67E-17	3.96E-17
+codon_S_TCT	codon_usage	Usage fraction of codon TCT for S within the region.	FALSE	0.006311343	1.67E-17	3.96E-17
+cpg_frac	gc_codon_indices	Fraction of dinucleotides that are CpG.	FALSE	0.008412981	1.11E-17	3.33E-17
+cpg_oe	gc_codon_indices	Observed/expected CpG ratio.	FALSE	0.002341889	2.78E-17	4.81E-17
+delta_aromaticity	physchem_deltas	Mean shift in aromaticity.	FALSE	0.002125756	0	0
+delta_fcr	physchem_deltas	Mean shift in fraction of charged residues.	FALSE	0.001675131	1.67E-17	3.96E-17
+delta_fraction_proline	physchem_deltas	Mean shift in proline fraction.	FALSE	0.002010748	5.55E-18	2.42E-17
+delta_hydropathy	physchem_deltas	Mean shift in hydropathy.	FALSE	0.002148383	1.11E-17	3.33E-17
+delta_kappa	physchem_deltas	Mean shift in charge patterning.	FALSE	0.006182673	1.11E-17	3.33E-17
+delta_n_neg	physchem_deltas	Mean shift in negative-residue count.	FALSE	0.004759679	0	0
+delta_n_pos	physchem_deltas	Mean shift in positive-residue count.	FALSE	0.002120924	1.67E-17	3.96E-17
+delta_ncpr	physchem_deltas	Mean variant-induced shift in net charge per residue.	FALSE	0.008752097	1.11E-17	3.33E-17
+delta_rg_ratio_rel_mean	rg_events	Mean relative change in RG ratio across variants.	FALSE	0.003155772	5.55E-18	2.42E-17
+density_inframe_indel	variant_composition	In-frame indels per residue.	FALSE	0.001381539	5.55E-18	2.42E-17
+density_LoF	variant_composition	Loss-of-function variants per residue.	FALSE	0.009746739	2.22E-17	4.44E-17
+density_missense	variant_composition	Missense variants per residue.	FALSE	0.002783542	1.11E-17	3.33E-17
+density_other	variant_composition	Other variants per residue.	TRUE			
+density_synonymous	variant_composition	Synonymous variants per residue.	FALSE	0.001960153	1.67E-17	3.96E-17
+esm_fraction_disruptive	esm	Fraction of missense below the ESM1b disruptive threshold (-0.7)	FALSE	0.047601806	5.55E-18	2.42E-17
+esm_mean	esm	Mean ESM1b LLR (missense).	TRUE			
+esm_median	esm	Median ESM1b LLR.	FALSE	0.028733708	0	0
+esm_min	esm	Minimum (most disruptive) ESM1b LLR.	FALSE	0.03820953	1.67E-17	3.96E-17
+esm_n_annotated	esm	Number of missense variants with an ESM1b score.	TRUE			
+esm_std	esm	SD of ESM1b LLR.	FALSE	0.043387718	1.11E-17	3.33E-17
+fraction_inframe_indel	variant_composition	In-frame indel fraction of all variants.	FALSE	0.001969026	0	0
+fraction_LoF	variant_composition	LoF fraction of all variants.	FALSE	0.007799674	1.67E-17	3.96E-17
+fraction_missense	variant_composition	Missense fraction of all variants.	FALSE	0.003095446	5.55E-18	2.42E-17
+fraction_other	variant_composition	Fraction of other variants.	TRUE			
+fraction_synonymous	variant_composition	Synonymous fraction of all variants.	TRUE			
+gc	gc_codon_indices	Region GC content.	FALSE	0.018259636	1.11E-17	3.33E-17
+gc3	gc_codon_indices	GC content at codon third positions (wobble).	FALSE	0.026341817	0	0
+n_g_hits_disrupting	rg_events	Count of disrupting variants at glycine positions.	FALSE	0.001671727	2.22E-17	4.44E-17
+n_inframe_indel	variant_composition	Count of indel variants.	TRUE			
+n_LoF	variant_composition	Count of LoF variants.	FALSE	0.001693569	1.67E-17	3.96E-17
+n_missense	variant_composition	Count of missense variants.	TRUE			
+n_other	variant_composition	Count of other-consequence variants.	FALSE	6.44E-05	6.66E-17	5.44E-17
+n_r_hits_disrupting	rg_events	Count of disrupting variants at arginine positions.	FALSE	0.00108544	1.67E-17	3.96E-17
+n_rg_motifs	sequence_basic	Number of RG/RGG di-residue motifs in the region.	FALSE	0.005403502	1.11E-17	3.33E-17
+n_synonymous	variant_composition	Total synonymous variants in the region.	TRUE			
+n_variants_total	variant_composition	Total variants in the region.	FALSE	0.00376675	1.67E-17	3.96E-17
+region_length	sequence_basic	Length of the motif region in residues.	FALSE	0.012314955	1.11E-17	3.33E-17
+rg_event_fraction_gain	rg_events	Fraction of RG events creating a duplet.	FALSE	0.000901567	2.78E-17	4.81E-17
+rg_event_fraction_loss	rg_events	Fraction of RG events losing a duplet.	TRUE			
+rg_event_fraction_movement	rg_events	Fraction of RG events shifting a duplet.	FALSE	0.000201013	2.78E-17	4.81E-17
+rg_event_fraction_no_change	rg_events	Fraction of RG events leaving the duplet unchanged.	FALSE	0.002001973	2.22E-17	4.44E-17
+rg_fraction	sequence_basic	Fraction of the region occupied by RG/RGG motifs.	FALSE	0.002001343	0	0
+rg_fraction_rgs_hit_inframe_indel	rg_events	Fraction of RG sites hit by an in-frame indel.	FALSE	0.000393218	1.11E-17	3.33E-17
+rg_fraction_rgs_hit_LoF	rg_events	Fraction of RG sites hit by an LoF variant.	FALSE	0.00341842	5.55E-18	2.42E-17
+rg_fraction_rgs_hit_missense	rg_events	Fraction of RG sites hit by a missense variant.	FALSE	0.000403151	1.11E-17	3.33E-17
+rg_fraction_rgs_hit_synonymous	rg_events	Fraction of RG sites hit by a synonymous variant.	FALSE	0.001285172	1.67E-17	3.96E-17
+rg_mean_burden_on_hit_inframe_indel	rg_events	Mean in-frame indel burden on hit RG sites.	FALSE	9.93E-06	1.11E-16	0
+rg_mean_burden_on_hit_LoF	rg_events	Mean LoF burden on hit RG sites.	FALSE	0.000656446	1.67E-17	3.96E-17
+rg_mean_burden_on_hit_missense	rg_events	Mean missense burden on hit RG sites.	FALSE	0.002493337	5.55E-18	2.42E-17
+rg_mean_burden_on_hit_synonymous	rg_events	Mean synonymous burden on hit RG sites.	FALSE	0.001937799	1.67E-17	3.96E-17
+rg_r_fraction	rg_events	Fraction of RG-motif residues that are arginine.	FALSE	0.001578363	1.11E-17	3.33E-17
+variant_density	variant_composition	Total variants per residue.	FALSE	0.006272314	1.11E-17	3.33E-17
+wt_aromaticity	wt_physchem	Wild-type aromatic-residue fraction.	FALSE	0.013002916	5.55E-18	2.42E-17
+wt_fcr	wt_physchem	Wild-type fraction of charged residues.	FALSE	0.002169768	2.22E-17	4.44E-17
+wt_fraction_proline	wt_physchem	Wild-type proline fraction.	FALSE	0.004378457	0	0
+wt_hydropathy	wt_physchem	Wild-type mean hydropathy.	FALSE	0.002976463	0	0
+wt_kappa	wt_physchem	Wild-type charge-patterning (kappa).	FALSE	0.011081682	1.11E-17	3.33E-17
+wt_n_neg	wt_physchem	Wild-type count of negatively charged residues.	FALSE	0.002179837	2.22E-17	4.44E-17
+wt_n_pos	wt_physchem	Wild-type count of positively charged residues.	FALSE	0.00164344	1.11E-17	3.33E-17
+wt_ncpr	wt_physchem	Wild-type net charge per residue.	FALSE	0.002410908	1.11E-17	3.33E-17

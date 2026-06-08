@@ -80,7 +80,6 @@ def _load_or_compute_physchem_deltas(df_rg, region_by_id, cache_path):
  
  
 def build_static_features(df_rg: pd.DataFrame, region_by_id: dict = None,
-                          df_esm: pd.DataFrame = None,
                           include_wt_physchem: bool = True,
                           codon_source_aas: list = None,
                           include_gc_codon_indices: bool = True,
@@ -138,11 +137,11 @@ def build_static_features(df_rg: pd.DataFrame, region_by_id: dict = None,
     # 4) ESM1b LLR per-region aggregations (imported, not reimplemented).
     #    Computed from df_esm, not df_rg; skipped if df_esm is None (mirrors
     #    the orchestrator). ESM is sequence-only -> orthogonal to the AF signal.
-    if df_esm is not None:
-        esm = compute_esm_per_region(df_esm)
-        esm = _strip_label_cols(esm)
-        esm = _set_index(esm)
-        parts.append(esm)
+
+    esm = compute_esm_per_region(df_rg)
+    esm = _strip_label_cols(esm)
+    esm = _set_index(esm)
+    parts.append(esm)
  
     # 5) RG-specific features: density, burden, R/G asymmetry, change events,
     #    delta RG ratio (imported, not reimplemented). Derives RG change events

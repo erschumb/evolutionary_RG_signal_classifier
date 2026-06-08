@@ -48,7 +48,7 @@ def _as_region_ids(X):
 class SubstitutionScoreTransformer(BaseEstimator, TransformerMixin):
     def __init__(self, df_for_rg, region_by_id, rates_path=None,
                  alpha=0.5, min_count=0, min_total=0,
-                 split_source=False, source_residues=("R", "G"),
+                 split_source=False, source_residues=("R", "G", "A", "D", "L", "E", "P", "S"),
                  missense_only=True, consequence_col="Consequence",
                  region_col="region_id", group_col="group",
                  from_col="from", to_col="to", key_sep="->"):
@@ -118,8 +118,9 @@ class SubstitutionScoreTransformer(BaseEstimator, TransformerMixin):
         """Average fitted score over one region's variants. Optionally split by source AA."""
         if len(variants) == 0:
             if self.split_source:
-                return {f"sub_score_mean_{r}": np.nan for r in self.source_residues} | \
-                       {"sub_score_mean_other": np.nan}
+                d = {f"sub_score_mean_{r}": np.nan for r in self.source_residues}
+                d["sub_score_mean_other"] = np.nan
+                return d
             return {"sub_score_mean": np.nan}
  
         scores_all, by_src = [], {r: [] for r in self.source_residues}

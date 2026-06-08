@@ -491,31 +491,111 @@ def load_esm_scores_for_protein(
     return pd.DataFrame(records, columns=["pos", "wt_aa", "mt_aa", "esm_score"])
 
 
+# def annotate_variants_with_esm(
+#     df: pd.DataFrame,
+#     zip_path: str | Path,
+#     uniprot_col: str = "uniprot_accession",
+#     pos_col: str = "Protein_position",
+#     after_col: str = "after_aa",
+#     consequence_col: str = "Consequence",
+# ) -> pd.DataFrame:
+#     """[Dataset-agnostic] Join ESM1b LLR scores onto a missense variant df."""
+#     df = df.copy()
+#     is_missense = df[consequence_col].fillna("").str.contains("missense_variant")
+#     df["esm_llr"] = np.nan
+
+#     n_hits, n_missing_protein, n_missing_variant = 0, 0, 0
+#     n_proteins = df.loc[is_missense, uniprot_col].nunique()
+#     print(f"Annotating against {n_proteins} unique proteins...")
+
+#     # Open the zip once and reuse — much faster than re-opening per protein
+#     with ZipFile(zip_path) as zf:
+#         all_names = zf.namelist()
+#         names = set(all_names)
+#         # Find directory prefix (the one entry ending in "/")
+#         prefix = next((n for n in all_names if n.endswith("/")), "")
+#         print(f"  zip prefix: {prefix!r}")
+#         names = set(all_names)
+#         for i, uid in enumerate(sorted(df.loc[is_missense, uniprot_col].dropna().unique())):
+#             target = f"{prefix}{uid}_LLR.csv"
+#             if target not in names:
+#                 n_missing_protein += 1
+#                 continue
+
+#             with zf.open(target) as f:
+#                 wide = pd.read_csv(f, index_col=0)
+
+#             # Build (pos, mt_aa) → score lookup
+#             lookup = {}
+#             for col in wide.columns:
+#                 parts = col.strip().split()
+#                 if len(parts) != 2:
+#                     continue
+#                 _, pos_str = parts
+#                 try:
+#                     pos = int(pos_str)
+#                 except ValueError:
+#                     continue
+#                 for mt_aa in wide.index:
+#                     s = wide.loc[mt_aa, col]
+#                     if pd.notna(s):
+#                         lookup[(pos, mt_aa)] = float(s)
+
+#             mask = is_missense & (df[uniprot_col] == uid)
+#             for idx in df.index[mask]:
+#                 try:
+#                     p = int(df.at[idx, pos_col])
+#                 except (TypeError, ValueError):
+#                     continue
+#                 mt = df.at[idx, after_col]
+#                 s = lookup.get((p, mt))
+#                 if s is not None:
+#                     df.at[idx, "esm_llr"] = s
+#                     n_hits += 1
+#                 else:
+#                     n_missing_variant += 1
+
+#             if (i + 1) % 50 == 0:
+#                 print(f"  {i+1}/{n_proteins} proteins")
+
+#     n_missense = int(is_missense.sum())
+#     print(f"\n── ESM1b LLR annotation ──")
+#     print(f"  Missense variants: {n_missense:,}")
+#     print(f"  Annotated: {n_hits:,} ({100*n_hits/max(n_missense,1):.1f}%)")
+#     print(f"  Proteins not in catalog: {n_missing_protein}")
+#     print(f"  Position/AA not found: {n_missing_variant:,}")
+#     return df
+
 def annotate_variants_with_esm(
     df: pd.DataFrame,
     zip_path: str | Path,
     uniprot_col: str = "uniprot_accession",
     pos_col: str = "Protein_position",
+    before_col: str = "before_aa",
     after_col: str = "after_aa",
     consequence_col: str = "Consequence",
 ) -> pd.DataFrame:
-    """[Dataset-agnostic] Join ESM1b LLR scores onto a missense variant df."""
+    """[Dataset-agnostic] Join ESM1b LLR scores onto a missense variant df.
+
+    Verifies that df's WT residue (`before_col`) matches the ESM catalog's
+    WT identity at each position; mismatches indicate position-numbering
+    drift (e.g. MANE vs isoform) and are counted and skipped rather than
+    assigned a wrong-residue score.
+    """
     df = df.copy()
     is_missense = df[consequence_col].fillna("").str.contains("missense_variant")
     df["esm_llr"] = np.nan
 
-    n_hits, n_missing_protein, n_missing_variant = 0, 0, 0
+    n_hits, n_missing_protein, n_missing_variant, n_wt_mismatch = 0, 0, 0, 0
     n_proteins = df.loc[is_missense, uniprot_col].nunique()
     print(f"Annotating against {n_proteins} unique proteins...")
 
-    # Open the zip once and reuse — much faster than re-opening per protein
     with ZipFile(zip_path) as zf:
         all_names = zf.namelist()
-        names = set(all_names)
-        # Find directory prefix (the one entry ending in "/")
         prefix = next((n for n in all_names if n.endswith("/")), "")
         print(f"  zip prefix: {prefix!r}")
         names = set(all_names)
+
         for i, uid in enumerate(sorted(df.loc[is_missense, uniprot_col].dropna().unique())):
             target = f"{prefix}{uid}_LLR.csv"
             if target not in names:
@@ -525,17 +605,19 @@ def annotate_variants_with_esm(
             with zf.open(target) as f:
                 wide = pd.read_csv(f, index_col=0)
 
-            # Build (pos, mt_aa) → score lookup
+            # Build (pos, mt_aa) → score lookup AND pos → wt_aa map
             lookup = {}
+            wt_by_pos = {}
             for col in wide.columns:
                 parts = col.strip().split()
                 if len(parts) != 2:
                     continue
-                _, pos_str = parts
+                wt_aa, pos_str = parts
                 try:
                     pos = int(pos_str)
                 except ValueError:
                     continue
+                wt_by_pos[pos] = wt_aa
                 for mt_aa in wide.index:
                     s = wide.loc[mt_aa, col]
                     if pd.notna(s):
@@ -547,6 +629,14 @@ def annotate_variants_with_esm(
                     p = int(df.at[idx, pos_col])
                 except (TypeError, ValueError):
                     continue
+
+                # WT cross-check: catch position-numbering drift
+                expected_wt = wt_by_pos.get(p)
+                bef = df.at[idx, before_col]
+                if expected_wt is not None and pd.notna(bef) and bef != expected_wt:
+                    n_wt_mismatch += 1
+                    continue
+
                 mt = df.at[idx, after_col]
                 s = lookup.get((p, mt))
                 if s is not None:
@@ -564,6 +654,7 @@ def annotate_variants_with_esm(
     print(f"  Annotated: {n_hits:,} ({100*n_hits/max(n_missense,1):.1f}%)")
     print(f"  Proteins not in catalog: {n_missing_protein}")
     print(f"  Position/AA not found: {n_missing_variant:,}")
+    print(f"  WT mismatches (numbering drift): {n_wt_mismatch:,}")
     return df
 
 

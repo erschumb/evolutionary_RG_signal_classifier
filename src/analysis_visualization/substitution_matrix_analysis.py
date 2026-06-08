@@ -3132,7 +3132,9 @@ def build_score_table(df, alpha=0.5, min_count=0, key_sep="->"):
  
     ratio_pos_raw = t["obs_pos"].clip(lower=eps) / exp_pos
     ratio_neg_raw = t["obs_neg"].clip(lower=eps) / exp_neg
-    t["score_raw"] = np.log2(ratio_pos_raw) - np.log2(ratio_neg_raw)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t["score_raw"] = np.log2(ratio_pos_raw) - np.log2(ratio_neg_raw)
+    # t["score_raw"] = np.log2(ratio_pos_raw) - np.log2(ratio_neg_raw)
  
     t["total_count"] = t["obs_pos"] + t["obs_neg"]
     t["key"] = t["from"].astype(str) + key_sep + t["to"].astype(str)
