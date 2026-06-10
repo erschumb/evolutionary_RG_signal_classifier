@@ -9,6 +9,8 @@ __pycache__/
 
 data/alphamissense/am_filtered_for_4groups_inference.parquet
 data/bcftools/combined_vep_variants_4groups.tsv
+data/alphamissense/am_filtered_for_4_groups.parquet
+data/processed/physchem_deltas_4groups.parquet
 
 notes/
 _archived/
