@@ -4,7 +4,7 @@ Load and filter gnomAD VEP TSV output.
 from __future__ import annotations
 import pandas as pd
 import json
-
+from functools import lru_cache
 
 def load_vep_tsv(path: str) -> pd.DataFrame:
     """
@@ -34,6 +34,7 @@ def filter_vep(df: pd.DataFrame) -> pd.DataFrame:
     mask_ensembl = df["Feature"].str.startswith("ENST", na=False)
 
     df_filt = df[mask_pass & mask_mane & mask_coding & mask_pos & mask_ensembl].copy()
+    # df_filt = df[mask_pass & mask_mane & mask_pos ].copy()
 
     print(f"Filter summary (starting from {n0:,} rows):")
     print(f"  PASS               : {mask_pass.sum():,} kept")
@@ -48,40 +49,60 @@ def filter_vep(df: pd.DataFrame) -> pd.DataFrame:
 
 import requests
 
-def fetch_uniprot_to_symbols(uniprot_ids: list[str], batch_size: int = 50) -> dict[str, list[str]]:
+# def fetch_uniprot_to_symbols(uniprot_ids: list[str], batch_size: int = 50) -> dict[str, list[str]]:
+#     """
+#     Fetch primary gene symbol + synonyms for a list of UniProt accessions.
+#     Returns {'Q13151': ['HNRNPA0', 'synonym1', ...], ...}
+
+#     Batches requests to stay within UniProt's URL length limits.
+#     """
+#     mapping: dict[str, list[str]] = {}
+#     url = "https://rest.uniprot.org/uniprotkb/search"
+
+#     for i in range(0, len(uniprot_ids), batch_size):
+#         batch = uniprot_ids[i:i + batch_size]
+#         query = " OR ".join(f"accession:{acc}" for acc in batch)
+#         params = {
+#             "query": query,
+#             "fields": "accession,gene_names",
+#             "format": "tsv",
+#             "size": 500,
+#         }
+
+#         r = requests.get(url, params=params)
+#         r.raise_for_status()
+
+#         lines = r.text.strip().split("\n")
+#         for line in lines[1:]:  # skip header
+#             parts = line.split("\t")
+#             if len(parts) < 2:
+#                 continue
+#             acc = parts[0]
+#             gene_names = parts[1] if len(parts) > 1 else ""
+#             mapping[acc] = gene_names.split() if gene_names else []
+
+#     print(f"Fetched {len(mapping)} / {len(uniprot_ids)} UniProt → gene symbol mappings")
+#     return mapping
+
+
+# _CACHE_PATH = Path(__file__).with_name("uniprot_to_symbols.json")
+
+@lru_cache(maxsize=1)
+def _load_cache(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+def fetch_uniprot_to_symbols(uniprot_ids: list[str], path: str = None, batch_size: int = 50) -> dict[str, list[str]]:
     """
-    Fetch primary gene symbol + synonyms for a list of UniProt accessions.
-    Returns {'Q13151': ['HNRNPA0', 'synonym1', ...], ...}
-
-    Batches requests to stay within UniProt's URL length limits.
+    Offline lookup of primary gene symbol + synonyms for UniProt accessions.
+    Reads from a pre-built JSON cache instead of the UniProt API.
+    `batch_size` is kept for signature compatibility and ignored.
     """
-    mapping: dict[str, list[str]] = {}
-    url = "https://rest.uniprot.org/uniprotkb/search"
-
-    for i in range(0, len(uniprot_ids), batch_size):
-        batch = uniprot_ids[i:i + batch_size]
-        query = " OR ".join(f"accession:{acc}" for acc in batch)
-        params = {
-            "query": query,
-            "fields": "accession,gene_names",
-            "format": "tsv",
-            "size": 500,
-        }
-
-        r = requests.get(url, params=params)
-        r.raise_for_status()
-
-        lines = r.text.strip().split("\n")
-        for line in lines[1:]:  # skip header
-            parts = line.split("\t")
-            if len(parts) < 2:
-                continue
-            acc = parts[0]
-            gene_names = parts[1] if len(parts) > 1 else ""
-            mapping[acc] = gene_names.split() if gene_names else []
-
-    print(f"Fetched {len(mapping)} / {len(uniprot_ids)} UniProt → gene symbol mappings")
+    cache = _load_cache(path)
+    mapping = {acc: cache[acc] for acc in uniprot_ids if acc in cache}
+    print(f"Fetched {len(mapping)} / {len(uniprot_ids)} UniProt → gene symbol mappings (offline)")
     return mapping
+
 
 def build_region_lookups(
     regions_json_path: str,

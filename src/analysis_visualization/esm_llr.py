@@ -234,76 +234,76 @@ def compare_esm_distributions(
 # Plotting
 # ════════════════════════════════════════════════════════════════════════════
 
-def plot_esm_distributions(
-    result: dict,
-    dataset: str = "gnomad",
-    save: bool = True,
-    title_suffix: str = "",
-) -> plt.Figure:
-    """
-    Two-panel figure:
-      1. Violin + box of ESM1b LLR distributions
-      2. ECDF of LLR scores
-    """
-    pos_color = GROUP_COLORS.get("pos", "#4daf4a")
-    neg_color = GROUP_COLORS.get("neg", "#e41a1c")
+# def plot_esm_distributions(
+#     result: dict,
+#     dataset: str = "gnomad",
+#     save: bool = True,
+#     title_suffix: str = "",
+# ) -> plt.Figure:
+#     """
+#     Two-panel figure:
+#       1. Violin + box of ESM1b LLR distributions
+#       2. ECDF of LLR scores
+#     """
+#     pos_color = GROUP_COLORS.get("pos", "#4daf4a")
+#     neg_color = GROUP_COLORS.get("neg", "#e41a1c")
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+#     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    # ── Panel 1: violin + boxplot ──────────────────────────────────────────
-    plot_df = pd.DataFrame({
-        "esm_llr": np.concatenate([result["pos_vals"], result["neg_vals"]]),
-        "group": (["pos"] * result["n_pos"]) + (["neg"] * result["n_neg"]),
-    })
-    sns.violinplot(
-        data=plot_df, x="group", y="esm_llr", ax=axes[0],
-        order=["pos", "neg"],
-        palette={"pos": pos_color, "neg": neg_color},
-        inner="box", cut=0,
-    )
-    axes[0].set_ylabel("ESM1b LLR  (more negative = more disruptive)")
-    axes[0].set_xlabel("")
-    axes[0].axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+#     # ── Panel 1: violin + boxplot ──────────────────────────────────────────
+#     plot_df = pd.DataFrame({
+#         "esm_llr": np.concatenate([result["pos_vals"], result["neg_vals"]]),
+#         "group": (["pos"] * result["n_pos"]) + (["neg"] * result["n_neg"]),
+#     })
+#     sns.violinplot(
+#         data=plot_df, x="group", y="esm_llr", ax=axes[0],
+#         order=["pos", "neg"],
+#         palette={"pos": pos_color, "neg": neg_color},
+#         inner="box", cut=0,
+#     )
+#     axes[0].set_ylabel("ESM1b LLR  (more negative = more disruptive)")
+#     axes[0].set_xlabel("")
+#     axes[0].axhline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
 
-    # Annotate with stats
-    p, d = result["p_value"], result["cohens_d"]
-    stars = significance_stars(p) if pd.notna(p) else "n/a"
-    label = (
-        f"n_pos = {result['n_pos']:,}\n"
-        f"n_neg = {result['n_neg']:,}\n"
-        f"U = {result['u_stat']:.0f}\n"
-        f"p = {p:.2e} {stars}\n"
-        f"Cohen's d = {d:.3f}"
-    )
-    axes[0].text(
-        0.98, 0.02, label, transform=axes[0].transAxes,
-        ha="right", va="bottom", fontsize=9,
-        bbox=dict(facecolor="white", edgecolor="0.7", boxstyle="round,pad=0.4"),
-    )
+#     # Annotate with stats
+#     p, d = result["p_value"], result["cohens_d"]
+#     stars = significance_stars(p) if pd.notna(p) else "n/a"
+#     label = (
+#         f"n_pos = {result['n_pos']:,}\n"
+#         f"n_neg = {result['n_neg']:,}\n"
+#         f"U = {result['u_stat']:.0f}\n"
+#         f"p = {p:.2e} {stars}\n"
+#         f"Cohen's d = {d:.3f}"
+#     )
+#     axes[0].text(
+#         0.98, 0.02, label, transform=axes[0].transAxes,
+#         ha="right", va="bottom", fontsize=9,
+#         bbox=dict(facecolor="white", edgecolor="0.7", boxstyle="round,pad=0.4"),
+#     )
 
-    # ── Panel 2: ECDF ──────────────────────────────────────────────────────
-    for vals, color, label in [
-        (result["pos_vals"], pos_color, "pos"),
-        (result["neg_vals"], neg_color, "neg"),
-    ]:
-        x = np.sort(vals)
-        y = np.arange(1, len(x) + 1) / len(x)
-        axes[1].plot(x, y, color=color, label=label, linewidth=1.5)
-    axes[1].set_xlabel("ESM1b LLR")
-    axes[1].set_ylabel("Cumulative fraction")
-    axes[1].axvline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
-    axes[1].legend(loc="lower right")
-    axes[1].grid(alpha=0.2)
+#     # ── Panel 2: ECDF ──────────────────────────────────────────────────────
+#     for vals, color, label in [
+#         (result["pos_vals"], pos_color, "pos"),
+#         (result["neg_vals"], neg_color, "neg"),
+#     ]:
+#         x = np.sort(vals)
+#         y = np.arange(1, len(x) + 1) / len(x)
+#         axes[1].plot(x, y, color=color, label=label, linewidth=1.5)
+#     axes[1].set_xlabel("ESM1b LLR")
+#     axes[1].set_ylabel("Cumulative fraction")
+#     axes[1].axvline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.6)
+#     axes[1].legend(loc="lower right")
+#     axes[1].grid(alpha=0.2)
 
-    title = f"ESM1b LLR  pos vs neg ({dataset})"
-    if title_suffix:
-        title += f" — {title_suffix}"
-    fig.suptitle(title, fontsize=13, y=1.02)
+#     title = f"ESM1b LLR  pos vs neg ({dataset})"
+#     if title_suffix:
+#         title += f" — {title_suffix}"
+#     fig.suptitle(title, fontsize=13, y=1.02)
 
-    plt.tight_layout()
-    if save:
-        save_figure(fig, "esm_llr_comparison", dataset=dataset)
-    return fig
+#     plt.tight_layout()
+#     if save:
+#         save_figure(fig, "esm_llr_comparison", dataset=dataset)
+#     return fig
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -766,6 +766,7 @@ def compute_llr_substitution_matrix(
         "n_neg": n_neg_m,
         "n_tested": len(tested_cells),
     }
+
 def plot_esm_distributions(
     result: dict,
     dataset: str = "gnomad",

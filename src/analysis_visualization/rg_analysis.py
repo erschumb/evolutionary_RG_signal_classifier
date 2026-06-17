@@ -1603,22 +1603,43 @@ def _classify_rg_event(rg_before: list[int], rg_after: list[int]) -> str:
 # ════════════════════════════════════════════════════════════════════════════
 # Build null distributions across regions
 # ════════════════════════════════════════════════════════════════════════════
- 
+def _mutability_weights(enum_df: pd.DataFrame, rates: dict) -> np.ndarray:
+    """
+    Samocha trinucleotide rate for every enumerated single-nt substitution,
+    keyed by (context, alt_base) — the same key compute_expected_substitution_counts
+    uses. Region-edge positions have context=None -> no rate -> NaN (dropped by caller).
+    """
+    return np.array(
+        [rates.get((ctx, alt)) for ctx, alt in
+         zip(enum_df["context"].to_numpy(), enum_df["alt_base"].to_numpy())],
+        dtype=float,
+    )
+
+
 def build_enumeration_null(
     region_by_id: dict,
     df_observed: pd.DataFrame,
+    rates: dict | None = None,
 ) -> dict:
     """
     For each region, enumerate all possible single-nt substitutions and
     aggregate into per-group null counts, weighted by the observed missense
     count per region (so regions with more observed variants contribute more).
- 
-    Returns a dict with:
-        rg_events_null      — DataFrame of expected counts per (group, rg_event)
-        consequences_null   — DataFrame of expected counts per (group, consequence)
-        per_region_enumerations — dict[region_id] -> enumeration DataFrame
+
+    Background weighting
+    --------------------
+    rates=None   : every possible single-nt substitution counts equally
+                   (composition / pure-randomness null — original behaviour).
+    rates=<dict> : every possible substitution is weighted by its Samocha
+                   trinucleotide mutation rate (mutability null; CpG-aware),
+                   matching compute_expected_substitution_counts. Get the dict
+                   from load_mutation_rates() in substitution_matrix.py. Keys are
+                   (trinuc_context, alt_base); the two context-less region-edge
+                   positions are dropped.
+
+    per_region_enumerations carry a '_w' weight column so the per-region
+    box-plot helpers reproduce the same weighting.
     """
-    # Observed missense count per region (used for weighting the null)
     obs_missense_per_region = (
         df_observed[
             df_observed["Consequence"].fillna("").str.contains("missense_variant")
@@ -1626,31 +1647,37 @@ def build_enumeration_null(
         .groupby("region_id")
         .size()
     )
- 
-    # Observed total variants per region (for weighting the consequence null)
     obs_total_per_region = df_observed.groupby("region_id").size()
- 
+
     rg_rows = []
     cons_rows = []
     per_region_enum = {}
- 
+
     for rid, region in region_by_id.items():
         dna = region.get("dna")
         protein = region.get("prot_seq")
         group = region.get("group")
         if not dna or not protein or len(dna) != 3 * len(protein):
             continue
- 
+
         enum_df = enumerate_single_nt_substitutions(dna, protein)
+
+        # Per-substitution weight: 1.0 (uniform) or the trinucleotide rate.
+        if rates is None:
+            enum_df = enum_df.assign(_w=1.0)
+        else:
+            enum_df = enum_df.assign(_w=_mutability_weights(enum_df, rates))
+            enum_df = enum_df.dropna(subset=["_w"])      # drop context-less edges
+
         per_region_enum[rid] = enum_df
- 
+
         # ── RG-event null: weighted by this region's observed missense count ──
         missense_enum = enum_df[enum_df["consequence"] == "missense"]
-        n_possible_missense = len(missense_enum)
+        total_w_missense = missense_enum["_w"].sum()
         n_obs_missense = int(obs_missense_per_region.get(rid, 0))
-        if n_possible_missense > 0 and n_obs_missense > 0:
+        if total_w_missense > 0 and n_obs_missense > 0:
             event_props = (
-                missense_enum["rg_event"].value_counts(normalize=True)
+                missense_enum.groupby("rg_event")["_w"].sum() / total_w_missense
             )
             for event, prop in event_props.items():
                 rg_rows.append({
@@ -1659,12 +1686,12 @@ def build_enumeration_null(
                     "rg_event": event,
                     "expected_count": prop * n_obs_missense,
                 })
- 
+
         # ── Consequence null: weighted by this region's observed total ──
-        n_possible = len(enum_df)
+        total_w = enum_df["_w"].sum()
         n_obs_total = int(obs_total_per_region.get(rid, 0))
-        if n_possible > 0 and n_obs_total > 0:
-            cons_props = enum_df["consequence"].value_counts(normalize=True)
+        if total_w > 0 and n_obs_total > 0:
+            cons_props = enum_df.groupby("consequence")["_w"].sum() / total_w
             for cons, prop in cons_props.items():
                 cons_rows.append({
                     "region_id": rid,
@@ -1672,7 +1699,7 @@ def build_enumeration_null(
                     "consequence": cons,
                     "expected_count": prop * n_obs_total,
                 })
- 
+
     rg_events_null = (
         pd.DataFrame(rg_rows)
           .groupby(["group", "rg_event"])["expected_count"]
@@ -1685,13 +1712,12 @@ def build_enumeration_null(
           .sum()
           .reset_index()
     )
- 
+
     return {
         "rg_events_null": rg_events_null,
         "consequences_null": consequences_null,
         "per_region_enumerations": per_region_enum,
     }
- 
  
 # ════════════════════════════════════════════════════════════════════════════
 # Plot: observed vs expected RG-event distribution
@@ -2062,7 +2088,12 @@ def _per_region_rg_event_proportions(
         missense_enum = enum_df[enum_df["consequence"] == "missense"]
         if len(missense_enum) == 0:
             continue
-        props = missense_enum["rg_event"].value_counts(normalize=True)
+        # Weighted if build_enumeration_null was given rates (else _w==1.0 -> identical).
+        if "_w" in missense_enum.columns:
+            w = missense_enum.groupby("rg_event")["_w"].sum()
+            props = w / w.sum()
+        else:
+            props = missense_enum["rg_event"].value_counts(normalize=True)
         for event, prop in props.items():
             exp_rows.append({
                 "region_id": rid, "group": group,
@@ -2126,11 +2157,14 @@ def _per_region_consequence_proportions(
         group = group_lookup.get(rid)
         if group is None:
             continue
-        # Restrict enumeration to the same categories
         enum_sub = enum_df[enum_df["consequence"].isin(categories)]
         if len(enum_sub) == 0:
             continue
-        props = enum_sub["consequence"].value_counts(normalize=True)
+        if "_w" in enum_sub.columns:
+            w = enum_sub.groupby("consequence")["_w"].sum()
+            props = w / w.sum()
+        else:
+            props = enum_sub["consequence"].value_counts(normalize=True)
         for cons, prop in props.items():
             exp_rows.append({
                 "region_id": rid, "group": group,

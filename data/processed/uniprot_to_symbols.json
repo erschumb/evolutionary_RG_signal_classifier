@@ -1,0 +1,1758 @@
+{
+"A0A1B0GVG6": [
+"TEX54"
+],
+"A0A1B0GVM6": [
+"C11orf97"
+],
+"A0A1B0GWI6": [
+"CXorf49C"
+],
+"A0A1W2PPD8": [
+"KDM4F"
+],
+"A0A1W2PPE3": [
+"C1orf202"
+],
+"A0A1W2PRP0": [
+"FOXL3"
+],
+"A0A286YF58": [
+"TMEM271"
+],
+"A0A3B3IS91": [
+"POLGARF"
+],
+"A0A494C030": [
+"LOC114841035"
+],
+"A0A590UJ96": [
+"LOC122526780"
+],
+"A0A6Q8PHR7": [
+"LOC128071545"
+],
+"A2AJT9": [
+"BCLAF3",
+"CXorf23"
+],
+"A4D2H0": [
+"CTAGE15",
+"CTAGE15P"
+],
+"A6H8Z2": [
+"FAM221B",
+"C9orf128"
+],
+"A6NDE4": [
+"RBMY1B"
+],
+"A6NDY0": [
+"PABPN1L",
+"EPABP2",
+"PABPNL1"
+],
+"A6NEQ0": [
+"RBMY1E"
+],
+"A6NHQ2": [
+"FBLL1"
+],
+"A6NIX2": [
+"WTIP"
+],
+"A7MD48": [
+"SRRM4",
+"KIAA1853"
+],
+"B2RXH2": [
+"KDM4E",
+"KDM4DL",
+"KDM5E"
+],
+"F5H4A9": [
+"C3orf80"
+],
+"I3L1E1": [
+"C19orf84"
+],
+"O00220": [
+"TNFRSF10A",
+"APO2",
+"DR4",
+"TRAILR1"
+],
+"O00267": [
+"SUPT5H",
+"SPT5",
+"SPT5H"
+],
+"O00401": [
+"WASL"
+],
+"O00453": [
+"LST1",
+"B144"
+],
+"O00562": [
+"PITPNM1",
+"DRES9",
+"NIR2",
+"PITPNM"
+],
+"O00571": [
+"DDX3X",
+"DBX",
+"DDX3"
+],
+"O14598": [
+"VCY",
+"BPY1",
+"VCY1A;",
+"VCY1B",
+"BPY1B"
+],
+"O14686": [
+"KMT2D",
+"ALR",
+"MLL2",
+"MLL4"
+],
+"O14979": [
+"HNRNPDL",
+"HNRPDL",
+"JKTBP"
+],
+"O15047": [
+"SETD1A",
+"KIAA0339",
+"KMT2F",
+"SET1",
+"SET1A"
+],
+"O15240": [
+"VGF"
+],
+"O15357": [
+"INPPL1",
+"SHIP2"
+],
+"O15399": [
+"GRIN2D",
+"GluN2D",
+"NMDAR2D"
+],
+"O15523": [
+"DDX3Y",
+"DBY"
+],
+"O43290": [
+"SART1"
+],
+"O43638": [
+"FOXS1",
+"FKHL18",
+"FREAC10"
+],
+"O43822": [
+"CFAP410",
+"C21orf2",
+"LRRC76"
+],
+"O43823": [
+"AKAP8",
+"AKAP95"
+],
+"O60281": [
+"ZNF292",
+"KIAA0530"
+],
+"O60565": [
+"GREM1",
+"CKTSF1B1",
+"DAND2",
+"DRM",
+"PIG2"
+],
+"O60828": [
+"PQBP1",
+"NPW38",
+"JM26"
+],
+"O60885": [
+"BRD4",
+"HUNK1"
+],
+"O75425": [
+"MOSPD3"
+],
+"O75462": [
+"CRLF1",
+"UNQ288/PRO327"
+],
+"O75525": [
+"KHDRBS3",
+"SALP",
+"SLM2"
+],
+"O75526": [
+"RBMXL2",
+"HNRNPGT"
+],
+"O76021": [
+"RSL1D1",
+"CATX11",
+"CSIG",
+"PBK1",
+"L12"
+],
+"O76050": [
+"NEURL1",
+"NEURL",
+"NEURL1A",
+"RNF67"
+],
+"O76061": [
+"STC2"
+],
+"O94826": [
+"TOMM70",
+"KIAA0719",
+"TOM70",
+"TOMM70A"
+],
+"O94876": [
+"TMCC1",
+"KIAA0779"
+],
+"O95948": [
+"ONECUT2",
+"HNF6B"
+],
+"P02814": [
+"SMR3B",
+"PBII",
+"PRL3",
+"PROL3"
+],
+"P05423": [
+"POLR3D",
+"BN51",
+"BN51T"
+],
+"P08621": [
+"SNRNP70",
+"RNPU1Z",
+"RPU1",
+"SNRP70",
+"U1AP1"
+],
+"P0C7P1": [
+"RBMY1D"
+],
+"P0DJD3": [
+"RBMY1A1",
+"RBM1",
+"RBM2",
+"YRRM1",
+"YRRM2"
+],
+"P0DKV0": [
+"SPATA31C1",
+"FAM75C1"
+],
+"P10301": [
+"RRAS"
+],
+"P10398": [
+"ARAF",
+"ARAF1",
+"PKS",
+"PKS2"
+],
+"P12270": [
+"TPR"
+],
+"P14678": [
+"SNRPB",
+"COD",
+"SNRPB1"
+],
+"P15692": [
+"VEGFA",
+"VEGF"
+],
+"P17096": [
+"HMGA1",
+"HMGIY"
+],
+"P17844": [
+"DDX5",
+"G17P1",
+"HELR",
+"HLR1"
+],
+"P19338": [
+"NCL"
+],
+"P20290": [
+"BTF3",
+"NACB",
+"OK/SW-cl.8"
+],
+"P20339": [
+"RAB5A",
+"RAB5"
+],
+"P22087": [
+"FBL",
+"FIB1",
+"FLRN"
+],
+"P22735": [
+"TGM1",
+"KTG"
+],
+"P23246": [
+"SFPQ",
+"PSF"
+],
+"P23588": [
+"EIF4B"
+],
+"P23677": [
+"ITPKA"
+],
+"P33240": [
+"CSTF2"
+],
+"P35637": [
+"FUS",
+"TLS"
+],
+"P35916": [
+"FLT4",
+"VEGFR3"
+],
+"P36021": [
+"SLC16A2",
+"MCT7",
+"MCT8",
+"XPCT"
+],
+"P38159": [
+"RBMX",
+"HNRPG",
+"RBMXP1"
+],
+"P42684": [
+"ABL2",
+"ABLL",
+"ARG"
+],
+"P42696": [
+"RBM34",
+"KIAA0117"
+],
+"P48634": [
+"PRRC2A",
+"BAT2",
+"G2"
+],
+"P49716": [
+"CEBPD"
+],
+"P49750": [
+"YLPM1",
+"C14orf170",
+"ZAP3"
+],
+"P49959": [
+"MRE11",
+"HNGS1",
+"MRE11A"
+],
+"P51114": [
+"FXR1"
+],
+"P51608": [
+"MECP2"
+],
+"P52926": [
+"HMGA2",
+"HMGIC"
+],
+"P53814": [
+"SMTN",
+"SMSMO"
+],
+"P54756": [
+"EPHA5",
+"BSK",
+"EHK1",
+"HEK7",
+"TYRO4"
+],
+"P55789": [
+"GFER",
+"ALR",
+"HERV1",
+"HPO"
+],
+"P56182": [
+"RRP1",
+"D21S2056E",
+"NNP1",
+"NOP52",
+"RRP1A"
+],
+"P56645": [
+"PER3",
+"GIG13"
+],
+"P58004": [
+"SESN2",
+"Hi95",
+"SEST2"
+],
+"P58340": [
+"MLF1"
+],
+"P61978": [
+"HNRNPK",
+"HNRPK"
+],
+"P67809": [
+"YBX1",
+"NSEP1",
+"YB1"
+],
+"P78332": [
+"RBM6",
+"DEF3"
+],
+"P79522": [
+"PRR3",
+"CAT56"
+],
+"P85299": [
+"PRR5",
+"PROTOR1",
+"PP610"
+],
+"P86478": [
+"PRR20E"
+],
+"P86479": [
+"PRR20C"
+],
+"P86480": [
+"PRR20D"
+],
+"P86481": [
+"PRR20B"
+],
+"P86496": [
+"PRR20A",
+"PRR20"
+],
+"P98175": [
+"RBM10",
+"DXS8237E",
+"GPATC9",
+"GPATCH9",
+"KIAA0122"
+],
+"P98179": [
+"RBM3",
+"RNPL"
+],
+"Q00536": [
+"CDK16",
+"PCTAIRE1",
+"PCTK1"
+],
+"Q00839": [
+"HNRNPU",
+"C1orf199",
+"HNRPU",
+"SAFA",
+"U21.1"
+],
+"Q00975": [
+"CACNA1B",
+"CACH5",
+"CACNL1A5"
+],
+"Q01081": [
+"U2AF1",
+"U2AF35",
+"U2AFBP",
+"FP793"
+],
+"Q01804": [
+"OTUD4",
+"HIN-1",
+"KIAA1046"
+],
+"Q01844": [
+"EWSR1",
+"EWS"
+],
+"Q04637": [
+"EIF4G1",
+"EIF4F",
+"EIF4G",
+"EIF4GI"
+],
+"Q06787": [
+"FMR1"
+],
+"Q07617": [
+"SPAG1"
+],
+"Q07666": [
+"KHDRBS1",
+"SAM68"
+],
+"Q07955": [
+"SRSF1",
+"ASF",
+"SF2",
+"SF2P33",
+"SFRS1",
+"OK/SW-cl.3"
+],
+"Q08170": [
+"SRSF4",
+"SFRS4",
+"SRP75"
+],
+"Q12774": [
+"ARHGEF5",
+"TIM"
+],
+"Q12792": [
+"TWF1",
+"PTK9"
+],
+"Q12830": [
+"BPTF",
+"FAC1",
+"FALZ"
+],
+"Q12872": [
+"SFSWAP",
+"SFRS8",
+"SWAP"
+],
+"Q12888": [
+"TP53BP1"
+],
+"Q12906": [
+"ILF3",
+"DRBF",
+"MPHOSPH4",
+"NF90"
+],
+"Q13151": [
+"HNRNPA0",
+"HNRPA0"
+],
+"Q13243": [
+"SRSF5",
+"HRS",
+"SFRS5",
+"SRP40"
+],
+"Q13283": [
+"G3BP1",
+"G3BP"
+],
+"Q13342": [
+"SP140",
+"LYSP100"
+],
+"Q13470": [
+"TNK1"
+],
+"Q13507": [
+"TRPC3",
+"TRP3"
+],
+"Q13595": [
+"TRA2A"
+],
+"Q13724": [
+"MOGS",
+"GCS1"
+],
+"Q13875": [
+"MOBP"
+],
+"Q14004": [
+"CDK13",
+"CDC2L",
+"CDC2L5",
+"CHED",
+"KIAA1791"
+],
+"Q14011": [
+"CIRBP",
+"A18HNRNP",
+"CIRP"
+],
+"Q14151": [
+"SAFB2",
+"KIAA0138"
+],
+"Q14152": [
+"EIF3A",
+"EIF3S10",
+"KIAA0139"
+],
+"Q14157": [
+"UBAP2L",
+"KIAA0144",
+"NICE4"
+],
+"Q14159": [
+"SPIDR",
+"KIAA0146"
+],
+"Q14160": [
+"SCRIB",
+"CRIB1",
+"KIAA0147",
+"LAP4",
+"SCRB1",
+"VARTUL"
+],
+"Q14444": [
+"CAPRIN1",
+"GPIAP1",
+"GPIP137",
+"M11S1",
+"RNG105"
+],
+"Q14596": [
+"NBR1",
+"1A13B",
+"KIAA0049",
+"M17S2",
+"MIG19"
+],
+"Q14657": [
+"LAGE3",
+"DXS9879E",
+"ESO3",
+"ITBA2"
+],
+"Q14674": [
+"ESPL1",
+"ESP1",
+"KIAA0165"
+],
+"Q15020": [
+"SART3",
+"KIAA0156",
+"TIP110"
+],
+"Q15027": [
+"ACAP1",
+"CENTB1",
+"KIAA0050"
+],
+"Q15056": [
+"EIF4H",
+"KIAA0038",
+"WBSCR1",
+"WSCR1"
+],
+"Q15270": [
+"NKX1-1",
+"HPX153",
+"SAX2"
+],
+"Q15415": [
+"RBMY1F",
+"YRRM2;",
+"RBMY1J"
+],
+"Q15424": [
+"SAFB",
+"HAP",
+"HET",
+"SAFB1"
+],
+"Q15427": [
+"SF3B4",
+"SAP49"
+],
+"Q15654": [
+"TRIP6",
+"OIP1"
+],
+"Q15696": [
+"ZRSR2",
+"U2AF1-RS2",
+"U2AF1L2",
+"U2AF1RS2",
+"URP"
+],
+"Q16630": [
+"CPSF6",
+"CFIM68"
+],
+"Q27J81": [
+"INF2",
+"C14orf151",
+"C14orf173"
+],
+"Q2NL82": [
+"TSR1",
+"KIAA1401"
+],
+"Q2Y0W8": [
+"SLC4A8",
+"KIAA0739",
+"NBC",
+"NBC3",
+"NDCBE1"
+],
+"Q32P51": [
+"HNRNPA1L2",
+"HNRNPA1L"
+],
+"Q3KQU3": [
+"MAP7D1",
+"KIAA1187",
+"PARCC1",
+"RPRC1",
+"PP2464"
+],
+"Q49A92": [
+"C8orf34"
+],
+"Q4AC94": [
+"C2CD3"
+],
+"Q504Y2": [
+"PKDCC",
+"SGK493",
+"VLK"
+],
+"Q52LJ0": [
+"FAM98B"
+],
+"Q5BKZ1": [
+"ZNF326",
+"ZIRD"
+],
+"Q5C9Z4": [
+"NOM1",
+"C7orf3"
+],
+"Q5GH72": [
+"XKR7",
+"C20orf159",
+"XRG7"
+],
+"Q5J8M3": [
+"EMC4",
+"TMEM85",
+"HSPC184",
+"PIG17"
+],
+"Q5JR59": [
+"MTUS2",
+"CAZIP",
+"KIAA0774",
+"TIP150"
+],
+"Q5JSZ5": [
+"PRRC2B",
+"BAT2L",
+"BAT2L1",
+"KIAA0515"
+],
+"Q5JVS0": [
+"HABP4"
+],
+"Q5M8T2": [
+"SLC35D3",
+"FRCL1"
+],
+"Q5SSQ6": [
+"SAPCD1",
+"C6orf26",
+"G7D",
+"NG23"
+],
+"Q5T200": [
+"ZC3H13",
+"KIAA0853"
+],
+"Q5T6F2": [
+"UBAP2",
+"KIAA1491"
+],
+"Q5T7B8": [
+"KIF24",
+"C9orf48"
+],
+"Q5TGI4": [
+"SAMD5",
+"SAMDC1"
+],
+"Q5TGY3": [
+"AHDC1"
+],
+"Q5U4P2": [
+"ASPHD1"
+],
+"Q5VUA4": [
+"ZNF318",
+"HRIHFB2436"
+],
+"Q5VUG0": [
+"SFMBT2",
+"KIAA1617"
+],
+"Q5VV17": [
+"OTUD1",
+"DUBA7",
+"OTDC1"
+],
+"Q5VWX1": [
+"KHDRBS2",
+"SLM1"
+],
+"Q659C4": [
+"LARP1B",
+"LARP2"
+],
+"Q66PJ3": [
+"ARL6IP4"
+],
+"Q69YL0": [
+"NCBP2AS2",
+"HIAR"
+],
+"Q69YN4": [
+"VIRMA",
+"KIAA1429",
+"MSTP054"
+],
+"Q6HA08": [
+"ASTL"
+],
+"Q6NSJ2": [
+"PHLDB3"
+],
+"Q6NUI6": [
+"CHADL",
+"SLRR4B"
+],
+"Q6NY19": [
+"KANK3",
+"ANKRD47"
+],
+"Q6NZI2": [
+"CAVIN1",
+"PTRF",
+"FKSG13"
+],
+"Q6PH81": [
+"C16orf87"
+],
+"Q6PKG0": [
+"LARP1",
+"KIAA0731",
+"LARP"
+],
+"Q6UX72": [
+"B3GNT9",
+"UNQ1922/PRO4397"
+],
+"Q6UXD7": [
+"SLC49A3",
+"MFSD7",
+"LP2561",
+"UNQ385/PRO717"
+],
+"Q6UXT8": [
+"ALKAL1",
+"FAM150A",
+"UNQ9433/PRO34745"
+],
+"Q6ZMN7": [
+"PDZRN4",
+"LNX4",
+"SEMCAP3L"
+],
+"Q6ZNB6": [
+"NFXL1",
+"OZFP"
+],
+"Q6ZSJ8": [
+"C1orf122"
+],
+"Q6ZUT6": [
+"CCDC9B",
+"C15orf52"
+],
+"Q6ZW31": [
+"SYDE1"
+],
+"Q71H61": [
+"ILDR2",
+"C1orf32"
+],
+"Q71RC2": [
+"LARP4",
+"PP13296"
+],
+"Q7L0Q8": [
+"RHOU",
+"ARHU",
+"CDC42L1",
+"G28K",
+"WRCH1",
+"SB128"
+],
+"Q7L2J0": [
+"MEPCE",
+"BCDIN3"
+],
+"Q7L311": [
+"ARMCX2",
+"ALEX2",
+"KIAA0512"
+],
+"Q7RTV3": [
+"ZNF367",
+"ZFF29"
+],
+"Q7Z6B7": [
+"SRGAP1",
+"ARHGAP13",
+"KIAA1304"
+],
+"Q7Z6E9": [
+"RBBP6",
+"P2PR",
+"PACT",
+"RBQ1",
+"My038"
+],
+"Q7Z7M0": [
+"MEGF8",
+"C19orf49",
+"EGFL4",
+"KIAA0817"
+],
+"Q86SG6": [
+"NEK8",
+"JCK",
+"NEK12A"
+],
+"Q86TL0": [
+"ATG4D",
+"APG4D",
+"AUTL4"
+],
+"Q86UF2": [
+"CTAGE6",
+"CTAGE6P"
+],
+"Q86X52": [
+"CHSY1",
+"CHSY",
+"CSS1",
+"KIAA0990",
+"UNQ756/PRO1487"
+],
+"Q86XE3": [
+"MICU3",
+"EFHA2"
+],
+"Q86YJ5": [
+"MARCHF9",
+"MARCH9",
+"RNF179"
+],
+"Q8IUH8": [
+"SPPL2C",
+"IMP5"
+],
+"Q8IV32": [
+"CCDC71"
+],
+"Q8IVV7": [
+"GID4",
+"C17orf39",
+"VID24"
+],
+"Q8IVW8": [
+"SPNS2"
+],
+"Q8IWY9": [
+"CDAN1",
+"UNQ664/PRO1295"
+],
+"Q8IY34": [
+"SLC15A3",
+"OCTP",
+"PHT2",
+"PTR3"
+],
+"Q8IY81": [
+"FTSJ3",
+"SB92"
+],
+"Q8IY92": [
+"SLX4",
+"BTBD12",
+"KIAA1784",
+"KIAA1987"
+],
+"Q8IYW2": [
+"CFAP46",
+"C10orf123",
+"C10orf124",
+"C10orf92",
+"C10orf93",
+"TTC40"
+],
+"Q8IZS6": [
+"DYNLT2",
+"TCTE3",
+"TCTEX1D3"
+],
+"Q8N119": [
+"MMP21"
+],
+"Q8N159": [
+"NAGS"
+],
+"Q8N1G1": [
+"REXO1",
+"ELOABP1",
+"KIAA1138",
+"TCEB3BP1"
+],
+"Q8N205": [
+"SYNE4",
+"C19orf46"
+],
+"Q8N539": [
+"FIBCD1",
+"UNQ701/PRO1346"
+],
+"Q8N5A5": [
+"ZGPAT",
+"GPATC6",
+"GPATCH6",
+"KIAA1847",
+"ZC3H9",
+"ZC3HDC9",
+"ZIP"
+],
+"Q8N715": [
+"CCDC185",
+"C1orf65"
+],
+"Q8N7X1": [
+"RBMXL3",
+"CXorf55"
+],
+"Q8N878": [
+"FRMD1"
+],
+"Q8N8E2": [
+"ZNF513"
+],
+"Q8N9V6": [
+"ANKRD53"
+],
+"Q8NC51": [
+"SERBP1",
+"PAIRBP1",
+"CGI-55"
+],
+"Q8NCA5": [
+"FAM98A"
+],
+"Q8NCF5": [
+"NFATC2IP",
+"NIP45"
+],
+"Q8ND56": [
+"LSM14A",
+"C19orf13",
+"FAM61A",
+"RAP55",
+"RAP55A"
+],
+"Q8NEZ4": [
+"KMT2C",
+"HALR",
+"KIAA1506",
+"MLL3"
+],
+"Q8NFW8": [
+"CMAS"
+],
+"Q8TAD8": [
+"SNIP1"
+],
+"Q8TBP5": [
+"FAM174A",
+"NS5ATP6",
+"TMEM157",
+"UNQ1912/PRO4371"
+],
+"Q8TDD1": [
+"DDX54"
+],
+"Q8TEC5": [
+"SH3RF2",
+"POSH3",
+"POSHER",
+"PPP1R39",
+"RNF158"
+],
+"Q8TER5": [
+"ARHGEF40",
+"SOLO"
+],
+"Q8WVM7": [
+"STAG1",
+"SA1",
+"SCC3"
+],
+"Q8WWM7": [
+"ATXN2L",
+"A2D",
+"A2LG",
+"A2LP",
+"A2RP"
+],
+"Q8WYB5": [
+"KAT6B",
+"KIAA0383",
+"MORF",
+"MOZ2",
+"MYST4"
+],
+"Q8WYH8": [
+"ING5"
+],
+"Q8WYR1": [
+"PIK3R5"
+],
+"Q92504": [
+"SLC39A7",
+"HKE4",
+"RING5"
+],
+"Q92541": [
+"RTF1",
+"KIAA0252"
+],
+"Q92574": [
+"TSC1",
+"KIAA0243",
+"TSC"
+],
+"Q92620": [
+"DHX38",
+"DDX38",
+"KIAA0224",
+"PRP16"
+],
+"Q92766": [
+"RREB1",
+"FINB"
+],
+"Q92784": [
+"DPF3",
+"BAF45C",
+"CERD4"
+],
+"Q92804": [
+"TAF15",
+"RBP56",
+"TAF2N"
+],
+"Q92837": [
+"FRAT1"
+],
+"Q92841": [
+"DDX17"
+],
+"Q92908": [
+"GATA6"
+],
+"Q92945": [
+"KHSRP",
+"FUBP2"
+],
+"Q969E3": [
+"UCN3",
+"SPC"
+],
+"Q969R2": [
+"OSBP2",
+"KIAA1664",
+"ORP4",
+"OSBPL4"
+],
+"Q96AE4": [
+"FUBP1"
+],
+"Q96DF8": [
+"ESS2",
+"DGCR13",
+"DGCR14",
+"DGSH",
+"DGSI",
+"ES2"
+],
+"Q96DX4": [
+"RSPRY1",
+"KIAA1972",
+"UNQ328/PRO444"
+],
+"Q96E39": [
+"RBMXL1"
+],
+"Q96EV2": [
+"RBM33",
+"PRR8"
+],
+"Q96GP6": [
+"SCARF2",
+"SREC2",
+"SREPCR"
+],
+"Q96JK4": [
+"HHIPL1",
+"HHIP2",
+"KIAA1822",
+"UNQ9245/PRO34761"
+],
+"Q96KE9": [
+"BTBD6",
+"BDPL"
+],
+"Q96L08": [
+"SUSD3",
+"UNQ9387/PRO34275"
+],
+"Q96L73": [
+"NSD1",
+"ARA267",
+"KMT3B"
+],
+"Q96LR7": [
+"CIMIP5",
+"C2orf50"
+],
+"Q96MU7": [
+"YTHDC1",
+"KIAA1966",
+"YT521"
+],
+"Q96NA8": [
+"TSNARE1"
+],
+"Q96NZ9": [
+"PRAP1",
+"UPA",
+"UNQ608/PRO1195"
+],
+"Q96PE1": [
+"ADGRA2",
+"GPR124",
+"KIAA1531",
+"TEM5"
+],
+"Q96PV4": [
+"PNMA5",
+"KIAA1934"
+],
+"Q96QC0": [
+"PPP1R10",
+"CAT53",
+"FB19",
+"PNUTS"
+],
+"Q96RR4": [
+"CAMKK2",
+"CAMKKB",
+"KIAA0787"
+],
+"Q96RT6": [
+"CTAGE1",
+"CTAGE2"
+],
+"Q96S66": [
+"CLCC1",
+"KIAA0761",
+"MCLC"
+],
+"Q96SZ5": [
+"ADO",
+"C10orf22"
+],
+"Q96T37": [
+"RBM15",
+"OTT",
+"OTT1"
+],
+"Q99466": [
+"NOTCH4",
+"INT3"
+],
+"Q99501": [
+"GAS2L1",
+"GAR22"
+],
+"Q99590": [
+"SCAF11",
+"CASP11",
+"SFRS2IP",
+"SIP1",
+"SRSF2IP"
+],
+"Q99683": [
+"MAP3K5",
+"ASK1",
+"MAPKKK5",
+"MEKK5"
+],
+"Q99729": [
+"HNRNPAB",
+"ABBP1",
+"HNRPAB"
+],
+"Q99832": [
+"CCT7",
+"CCTH",
+"NIP7-1"
+],
+"Q99954": [
+"SMR3A",
+"PBI",
+"PROL5"
+],
+"Q9BQ70": [
+"TCF25",
+"KIAA1049",
+"NULP1",
+"FKSG26"
+],
+"Q9BRK4": [
+"LZTS2",
+"KIAA1813",
+"LAPSER1"
+],
+"Q9BRL6": [
+"SRSF8",
+"SFRS2B",
+"SRP46"
+],
+"Q9BU76": [
+"MMTAG2",
+"C1orf35"
+],
+"Q9BUJ2": [
+"HNRNPUL1",
+"E1BAP5",
+"HNRPUL1"
+],
+"Q9BWW9": [
+"APOL5"
+],
+"Q9BXP5": [
+"SRRT",
+"ARS2",
+"ASR2"
+],
+"Q9BXQ6": [
+"TMEM121B",
+"CECR6"
+],
+"Q9BZG8": [
+"DPH1",
+"DPH2L",
+"DPH2L1",
+"OVCA1"
+],
+"Q9C0B5": [
+"ZDHHC5",
+"KIAA1748",
+"ZNF375"
+],
+"Q9GZU7": [
+"CTDSP1",
+"NIF3",
+"NLIIF",
+"SCP1"
+],
+"Q9H074": [
+"PAIP1"
+],
+"Q9H091": [
+"ZMYND15"
+],
+"Q9H0L4": [
+"CSTF2T",
+"KIAA0689"
+],
+"Q9H147": [
+"DNTTIP1",
+"C20orf167",
+"TDIF1"
+],
+"Q9H2U1": [
+"DHX36",
+"DDX36",
+"KIAA1488",
+"MLEL1",
+"RHAU"
+],
+"Q9H307": [
+"PNN",
+"DRS",
+"MEMA"
+],
+"Q9H320": [
+"VCX",
+"VCX1",
+"VCX10R",
+"VCXB1"
+],
+"Q9H321": [
+"VCX3B",
+"VCXC"
+],
+"Q9H322": [
+"VCX2",
+"VCX2R",
+"VCXB"
+],
+"Q9H5H4": [
+"ZNF768"
+],
+"Q9H6Y5": [
+"MAGIX"
+],
+"Q9H7E2": [
+"TDRD3"
+],
+"Q9H7M6": [
+"ZSWIM4"
+],
+"Q9H7X2": [
+"C1orf115",
+"RDD1"
+],
+"Q9HAS0": [
+"C17orf75"
+],
+"Q9HBH9": [
+"MKNK2",
+"GPRK7",
+"MNK2"
+],
+"Q9HCE5": [
+"METTL14",
+"KIAA1627"
+],
+"Q9HCM7": [
+"FBRSL1",
+"AUTS2L",
+"KIAA1545",
+"XTP9"
+],
+"Q9HCU4": [
+"CELSR2",
+"CDHF10",
+"EGFL2",
+"KIAA0279",
+"MEGF3"
+],
+"Q9NNX9": [
+"VCX3A",
+"VCX3",
+"VCX8R",
+"VCXA"
+],
+"Q9NP85": [
+"NPHS2"
+],
+"Q9NQ55": [
+"PPAN",
+"BXDC3",
+"SSF1"
+],
+"Q9NQI0": [
+"DDX4",
+"VASA"
+],
+"Q9NQV6": [
+"PRDM10",
+"KIAA1231",
+"PFM7",
+"TRIS"
+],
+"Q9NR30": [
+"DDX21"
+],
+"Q9NRR4": [
+"DROSHA",
+"RN3",
+"RNASE3L",
+"RNASEN"
+],
+"Q9NRR6": [
+"INPP5E"
+],
+"Q9NS37": [
+"CREBZF",
+"ZF"
+],
+"Q9NTU4": [
+"CATSPERZ",
+"C11orf20",
+"TEX40"
+],
+"Q9NUG4": [
+"CCM2L",
+"C20orf160"
+],
+"Q9NV92": [
+"NDFIP2",
+"KIAA1165",
+"N4WBP5A"
+],
+"Q9NWH9": [
+"SLTM",
+"MET"
+],
+"Q9NWM0": [
+"SMOX",
+"C20orf16",
+"SMO",
+"UNQ3039/PRO9854"
+],
+"Q9NXX6": [
+"NSMCE4A",
+"C10orf86",
+"PP4762"
+],
+"Q9NY12": [
+"GAR1",
+"NOLA1"
+],
+"Q9NYF8": [
+"BCLAF1",
+"BTF",
+"KIAA0164"
+],
+"Q9NYQ6": [
+"CELSR1",
+"CDHF9",
+"FMI2"
+],
+"Q9NZM5": [
+"NOP53",
+"GLT",
+"GLTSCR2",
+"PICT1"
+],
+"Q9NZR4": [
+"VSX1",
+"RINX"
+],
+"Q9P013": [
+"CWC15",
+"C11orf5",
+"AD-002",
+"HSPC148"
+],
+"Q9P015": [
+"MRPL15",
+"HSPC145"
+],
+"Q9P0K9": [
+"FRRS1L",
+"C9orf4"
+],
+"Q9P107": [
+"GMIP"
+],
+"Q9P1Z0": [
+"ZBTB4",
+"KIAA1538"
+],
+"Q9P2N5": [
+"RBM27",
+"KIAA1311"
+],
+"Q9UBB5": [
+"MBD2"
+],
+"Q9UBS0": [
+"RPS6KB2",
+"STK14B"
+],
+"Q9UBX2": [
+"DUX4",
+"DUX10"
+],
+"Q9UH36": [
+"SRRD",
+"SRR1L"
+],
+"Q9UIF9": [
+"BAZ2A",
+"KIAA0314",
+"TIP5"
+],
+"Q9UJJ9": [
+"GNPTG",
+"C16orf27",
+"GNPTAG",
+"CAB56184",
+"LP2537"
+],
+"Q9UJV8": [
+"PURG"
+],
+"Q9UKV0": [
+"HDAC9",
+"HDAC7",
+"HDAC7B",
+"HDRP",
+"KIAA0744",
+"MITR"
+],
+"Q9UKY1": [
+"ZHX1"
+],
+"Q9ULG1": [
+"INO80",
+"INO80A",
+"INOC1",
+"KIAA1259"
+],
+"Q9ULH4": [
+"LRFN2",
+"KIAA1246",
+"SALM1"
+],
+"Q9ULI3": [
+"HEG1",
+"KIAA1237"
+],
+"Q9UM47": [
+"NOTCH3"
+],
+"Q9UMN6": [
+"KMT2B",
+"HRX2",
+"KIAA0304",
+"MLL2",
+"MLL4",
+"TRX2",
+"WBP7"
+],
+"Q9UN86": [
+"G3BP2",
+"KIAA0660"
+],
+"Q9UPR0": [
+"PLCL2",
+"KIAA1092",
+"PLCE2"
+],
+"Q9UPT8": [
+"ZC3H4",
+"C19orf7",
+"KIAA1064"
+],
+"Q9UPU3": [
+"SORCS3",
+"KIAA1059"
+],
+"Q9UQ35": [
+"SRRM2",
+"KIAA0324",
+"SRL300",
+"SRM300",
+"HSPC075"
+],
+"Q9UQC2": [
+"GAB2",
+"KIAA0571"
+],
+"Q9Y210": [
+"TRPC6",
+"TRP6"
+],
+"Q9Y2G9": [
+"SBNO2",
+"KIAA0963"
+],
+"Q9Y2V3": [
+"RAX",
+"RX"
+],
+"Q9Y2W1": [
+"THRAP3",
+"BCLAF2",
+"TRAP150"
+],
+"Q9Y3X0": [
+"CCDC9"
+],
+"Q9Y3Y2": [
+"CHTOP",
+"C1orf77",
+"FOP",
+"HT031",
+"PP7704"
+],
+"Q9Y446": [
+"PKP3"
+],
+"Q9Y4Z0": [
+"LSM4"
+],
+"Q9Y520": [
+"PRRC2C",
+"BAT2D1",
+"BAT2L2",
+"KIAA1096",
+"XTP2"
+],
+"Q9Y5B9": [
+"SUPT16H",
+"FACT140",
+"FACTP140"
+],
+"Q9Y5S9": [
+"RBM8A",
+"RBM8",
+"HSPC114",
+"MDS014"
+],
+"Q9Y5W3": [
+"KLF2",
+"LKLF"
+]
+}

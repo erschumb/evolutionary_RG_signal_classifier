@@ -100,12 +100,12 @@ def plot_variant_density(
     sns.stripplot(
         data=density_df, x="group", y="density",
         order=["neg", "pos"], color="black", size=1.5, alpha=0.4,
-        jitter=0.15, ax=ax,
+        jitter=0.2, ax=ax,
     )
 
     # Significance annotation
     ymax = density_df["density"].quantile(0.99)
-    y_bar = ymax * 1.05
+    y_bar = ymax * 1.08
     ax.plot([0, 1], [y_bar, y_bar], color="black", lw=0.6)
     ax.text(0.5, y_bar * 1.02, results["mannwhitney_sig"],
             ha="center", va="bottom", fontsize=8)
@@ -116,16 +116,16 @@ def plot_variant_density(
         ax.set_ylim(0, y_max)
     else:
         ax.set_ylim(0, y_bar * 1.15)
-    ax.set_title(f"Variant density per region ({dataset})")
+    ax.set_title(f"Variant density per region ({dataset})", pad=15)
 
     stats_text = (
         f"p = {results['mannwhitney_p']:.1e}\n"
         f"n_pos = {results['n_pos']}\n"
         f"n_neg = {results['n_neg']}"
     )
-    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+    ax.text(0.05, 1.06, stats_text, transform=ax.transAxes,
             fontsize=6.5, va="top", ha="left",
-            bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=1))
 
     sns.despine()
     plt.tight_layout()
@@ -157,7 +157,7 @@ _TERM_TO_GROUP = {
 }
 
 CONSEQUENCE_ORDER = ["synonymous", "missense", "inframe_indel",
-                    "LoF", "other"]
+                    "LoF", "other"] 
 
 
 def collapse_consequence(consequence: str | None) -> str:
@@ -173,13 +173,16 @@ def collapse_consequence(consequence: str | None) -> str:
     return "other"
 
 
-def compute_consequence_proportions(df: pd.DataFrame) -> pd.DataFrame:
+def compute_consequence_proportions(df: pd.DataFrame, drop_other: bool = False) -> pd.DataFrame:
     """
     [Dataset-agnostic]
     Returns long-form df: group, consequence_class, count, proportion.
     """
     df = df.copy()
     df["consequence_class"] = df["Consequence"].apply(collapse_consequence)
+
+    if drop_other:
+        df = df[df["consequence_class"] != "other"]
 
     counts = (
         df.groupby(["group", "consequence_class"])
@@ -197,6 +200,7 @@ def compute_consequence_proportions(df: pd.DataFrame) -> pd.DataFrame:
 def compare_consequence_distributions(
     df: pd.DataFrame,
     dataset: str = "gnomad",
+    drop_other: bool = False
 ) -> dict:
     """
     [Dataset-agnostic]
@@ -204,6 +208,10 @@ def compare_consequence_distributions(
     """
     df = df.copy()
     df["consequence_class"] = df["Consequence"].apply(collapse_consequence)
+
+    if drop_other:
+        df = df[df["consequence_class"] != "other"]
+
     contingency = pd.crosstab(df["group"], df["consequence_class"])
 
     # Overall chi²
@@ -256,25 +264,29 @@ def plot_consequence_distributions(
     df: pd.DataFrame,
     dataset: str = "gnomad",
     save: bool = True,
+    drop_other: bool = False,
 ) -> tuple[plt.Figure, dict]:
     """
     [Dataset-agnostic]
     Two-panel: (left) proportions per group as grouped bars;
                (right) log2 fold-change enrichment, pos vs neg.
     """
-    results = compare_consequence_distributions(df, dataset=dataset)
-    props = compute_consequence_proportions(df)
+    results = compare_consequence_distributions(df, dataset=dataset, drop_other=drop_other)
+    props = compute_consequence_proportions(df, drop_other=drop_other)
+
+    order = [c for c in CONSEQUENCE_ORDER if c != "other"] if drop_other else CONSEQUENCE_ORDER
+
     per_cat = results["per_category"].copy()
     per_cat = per_cat.set_index("consequence_class").reindex(CONSEQUENCE_ORDER).reset_index()
 
     fig, axes = plt.subplots(1, 2, figsize=FIGSIZE_DOUBLE,
-                              gridspec_kw={"width_ratios": [1.3, 1]})
+                              gridspec_kw={"width_ratios": [1.2, 1]})
 
     # Left: grouped proportions
     ax = axes[0]
     sns.barplot(
         data=props, x="consequence_class", y="proportion", hue="group",
-        order=CONSEQUENCE_ORDER, hue_order=["neg", "pos"],
+        order=order, hue_order=["neg", "pos"],
         palette=[GROUP_COLORS["neg"], GROUP_COLORS["pos"]],
         edgecolor="black", linewidth=0.4, ax=ax,
     )
@@ -287,10 +299,10 @@ def plot_consequence_distributions(
         lbl.set_ha("right")
 
     # Annotate overall chi² p
-    ax.text(0.02, 0.98,
-            f"χ² p = {results['chi2_p']:.1e} {results['chi2_sig']}",
-            transform=ax.transAxes, fontsize=6.5, va="top", ha="left",
-            bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
+    # ax.text(0.02, 0.98,
+    #         f"χ² p = {results['chi2_p']:.1e} {results['chi2_sig']}",
+    #         transform=ax.transAxes, fontsize=6.5, va="top", ha="left",
+    #         bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
 
     # Right: log2 fold-change enrichment
     ax = axes[1]
@@ -307,10 +319,11 @@ def plot_consequence_distributions(
     for bar, sig_mark in zip(bars, per_cat["sig"]):
         w = bar.get_width()
         ax.text(
-            w + (0.02 if w >= 0 else -0.02),
+            # w + (0.02 if w >= 0 else -0.02),
+            (-0.03 if w >= 0 else 0.03),
             bar.get_y() + bar.get_height() / 2,
             sig_mark,
-            va="center", ha="left" if w >= 0 else "right", fontsize=7,
+            va="top", ha="right" if w >= 0 else "left", fontsize=7,
         )
     ax.axvline(0, color="black", lw=0.6)
     ax.set_xlabel("log₂(pos / neg)")

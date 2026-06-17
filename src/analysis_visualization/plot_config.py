@@ -76,7 +76,7 @@ def save_figure(fig, name: str, dataset: str = "gnomad") -> None:
     """
     formats = {
         "svg": {},
-        "pdf": {},
+        # "pdf": {},
         "png": {"dpi": 600},
     }
     for ext, kwargs in formats.items():
