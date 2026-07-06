@@ -131,7 +131,7 @@ def plot_variant_density(
     plt.tight_layout()
 
     if save:
-        save_figure(fig, "variant_density", dataset=dataset)
+        save_figure(fig, "variant_densityö", dataset=dataset)
 
     return fig, results
 

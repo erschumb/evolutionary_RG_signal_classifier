@@ -36,7 +36,7 @@ import seaborn as sns
 from scipy.stats import mannwhitneyu
 
 from src.analysis_visualization.plot_config import (
-    GROUP_COLORS, save_figure, significance_stars,
+    GROUP_COLORS, save_figure, significance_stars, FIGSIZE_SINGLE
 )
 
 
@@ -961,3 +961,94 @@ def run_llr_substitution_analysis(
     result["min_obs"] = min_obs
     plot_llr_substitution_matrix(result, dataset=dataset, save=save, **plot_kwargs)
     return result
+
+def plot_median_esm_llr(
+    df: pd.DataFrame,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> tuple[plt.Figure, dict]:
+    """
+    [gnomAD-specific]
+    For each region, compute the median ESM1b LLR across its missense
+    variants. Compare pos vs neg. (More negative = more disruptive.)
+    """
+    mask = (
+        df["Consequence"].fillna("").str.contains("missense_variant") &
+        df["esm_llr"].notna()
+    )
+    sub = df[mask]
+
+    per_region = (
+        sub.groupby(["region_id", "group"])["esm_llr"]
+           .median()
+           .reset_index(name="median_esm")
+    )
+
+    pos_vals = per_region.loc[per_region["group"] == "pos", "median_esm"]
+    neg_vals = per_region.loc[per_region["group"] == "neg", "median_esm"]
+    _, p = mannwhitneyu(pos_vals, neg_vals, alternative="two-sided")
+    sig = significance_stars(p)
+
+    fig, ax = plt.subplots(figsize=FIGSIZE_SINGLE)
+    sns.boxplot(
+        data=per_region, x="group", y="median_esm",
+        order=["neg", "pos"],
+        palette=[GROUP_COLORS["neg"], GROUP_COLORS["pos"]],
+        width=0.5, fliersize=0, linewidth=0.6, ax=ax,
+        showmeans=True,
+        meanprops={"marker": "D", "markerfacecolor": "white",
+                   "markeredgecolor": "black", "markersize": 4},
+    )
+    sns.stripplot(
+        data=per_region, x="group", y="median_esm",
+        order=["neg", "pos"], color="black", size=1.5,
+        alpha=0.4, jitter=0.15, ax=ax,
+    )
+
+    # Reference line at 0 (neutral LLR)
+    ax.axhline(0, color="gray", linestyle="--", linewidth=0.6, alpha=0.6)
+
+    # Significance bracket — placed above the data (LLR spans negatives)
+    y_top = per_region["median_esm"].max()
+    y_bot = per_region["median_esm"].min()
+    span  = y_top - y_bot if y_top > y_bot else 1.0
+    y_bar = y_top + span * 0.08
+    ax.plot([0, 1], [y_bar, y_bar], color="black", lw=0.6)
+    ax.text(0.5, y_bar + span * 0.02, sig, ha="center", va="bottom", fontsize=8)
+    ax.set_ylim(y_bot - span * 0.10, y_bar + span * 0.18)
+
+    ax.set_title("Median ESM1b LLR (per region)")
+    ax.set_ylabel("Median ESM1b LLR  (more negative = more disruptive)")
+    ax.set_xlabel("")
+
+    stats_text = (
+        f"p = {p:.1e} {sig}\n"
+        f"n_pos = {len(pos_vals)}\n"
+        f"n_neg = {len(neg_vals)}"
+    )
+    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+            fontsize=6.5, va="top", ha="left",
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="none", pad=2))
+
+    sns.despine()
+    plt.tight_layout()
+
+    if save:
+        save_figure(fig, "region_median_esm_llr", dataset=dataset)
+
+    results = {
+        "p": float(p), "sig": sig,
+        "median_pos": float(pos_vals.median()),
+        "median_neg": float(neg_vals.median()),
+        "mean_pos": float(pos_vals.mean()),
+        "mean_neg": float(neg_vals.mean()),
+        "n_pos": int(len(pos_vals)),
+        "n_neg": int(len(neg_vals)),
+    }
+
+    print(f"\n── Median ESM1b LLR per region ({dataset}) ──")
+    print(f"  pos: median={results['median_pos']:.3f}, mean={results['mean_pos']:.3f}, n={results['n_pos']}")
+    print(f"  neg: median={results['median_neg']:.3f}, mean={results['mean_neg']:.3f}, n={results['n_neg']}")
+    print(f"  Mann-Whitney p = {p:.2e} {sig}")
+
+    return fig, results

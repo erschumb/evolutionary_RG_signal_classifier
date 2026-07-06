@@ -130,7 +130,7 @@ def shap_importance(rf, Xi_df, max_display=20):
  
  
 # ── plotting ────────────────────────────────────────────────────────────────
-def plot_group_importance(gpi_df, ax=None, color="#4C72B0"):
+def plot_group_importance(gpi_df, ax=None, color="#4C72B0", group_colors=None):
     """Horizontal bar chart of group permutation importance (mean AUC drop)."""
     import matplotlib.pyplot as plt
     if ax is None:
@@ -138,8 +138,10 @@ def plot_group_importance(gpi_df, ax=None, color="#4C72B0"):
     else:
         fig = ax.figure
     d = gpi_df.sort_values("importance_mean")
+    bar_colors = ([group_colors.get(g, color) for g in d["group"]]
+                 if group_colors else color)
     ax.barh(d["group"], d["importance_mean"], xerr=d["importance_std"],
-            color=color, edgecolor="black", linewidth=0.4,
+            color=bar_colors, edgecolor="black", linewidth=0.4,
             error_kw=dict(lw=0.8, capsize=2))
     ax.axvline(0, color="#888", lw=0.8)
     ax.set_xlabel("Permutation importance\n(mean AUC drop when group shuffled)")
@@ -233,22 +235,17 @@ def plot_shap_bar_by_group(summary_df, max_display=20, ax=None,
     fig.tight_layout()
     return fig, group_colors
  
- 
+
 def plot_shap_beeswarm_grouped(shap_values, Xi_df, summary_df=None,
                                max_display=20, group_colors=None):
-    """
-    SHAP beeswarm but with y-axis feature labels COLORED by group + a group
-    legend. Dot colors still encode feature VALUE (standard SHAP); the group
-    info is conveyed via the tick-label colors and legend.
-    """
     import shap, matplotlib.pyplot as plt
     from matplotlib.patches import Patch
- 
+
+    plt.figure()   # <-- force a brand-new figure so summary_plot can't reuse a stale one
     shap.summary_plot(shap_values, Xi_df, max_display=max_display, show=False)
     fig = plt.gcf(); ax = plt.gca()
- 
+
     f2g = _feature_to_group_map(Xi_df.columns)
-    # the y tick labels are feature names (top feature at top)
     labels = [t.get_text() for t in ax.get_yticklabels()]
     present = list(dict.fromkeys(f2g[l] for l in labels if l in f2g))
     if group_colors is None:
@@ -264,4 +261,57 @@ def plot_shap_beeswarm_grouped(shap_values, Xi_df, summary_df=None,
               title_fontsize=11, loc="center left", bbox_to_anchor=(-1, 0.5), frameon=False)
     fig.tight_layout()
     return fig, group_colors
+
+# def plot_shap_beeswarm_grouped(shap_values, Xi_df, summary_df=None,
+#                                max_display=20, group_colors=None):
+#     """
+#     SHAP beeswarm but with y-axis feature labels COLORED by group + a group
+#     legend. Dot colors still encode feature VALUE (standard SHAP); the group
+#     info is conveyed via the tick-label colors and legend.
+#     """
+#     import shap, matplotlib.pyplot as plt
+#     from matplotlib.patches import Patch
+    
+#     shap.summary_plot(shap_values, Xi_df, max_display=max_display, show=False)
+#     fig = plt.gcf(); ax = plt.gca()
  
+#     f2g = _feature_to_group_map(Xi_df.columns)
+#     # the y tick labels are feature names (top feature at top)
+#     labels = [t.get_text() for t in ax.get_yticklabels()]
+#     present = list(dict.fromkeys(f2g[l] for l in labels if l in f2g))
+#     if group_colors is None:
+#         group_colors = get_group_colors(present)
+#     for t in ax.get_yticklabels():
+#         g = f2g.get(t.get_text())
+#         if g in group_colors:
+#             t.set_color(group_colors[g])
+#             t.set_fontweight("bold")
+#     handles = [Patch(facecolor=group_colors[g], label=g) for g in present]
+#     ax.legend(handles=handles, title="feature group", fontsize=8,
+#               title_fontsize=11, loc="center left", bbox_to_anchor=(-1, 0.5), frameon=False)
+#     fig.tight_layout()
+#     return fig, group_colors
+ 
+# def get_group_colors(group_names, cmap_name="batlowS"):
+#     import cmcrameri.cm as cmc
+#     cmap = getattr(cmc, cmap_name)
+#     n = max(len(group_names), 1)
+#     colors = [cmap(i) for i in range(n)]   # batlowS is already discrete/qualitative
+#     return {g: colors[i] for i, g in enumerate(group_names)}
+
+COLORBREWER_PAIRED_12 = [
+    "#a6cee3", "#f8a358", "#b2df8a", "#33a02c",
+    "#fc7c7a", "#e30f12", "#1f78b4", "#ff5e00",
+    "#c49ad9", "#6b31a8", "#B88366", "#914116",
+]
+
+def get_group_colors(group_names, palette=COLORBREWER_PAIRED_12):
+    n = len(group_names)
+    if n > len(palette):
+        raise ValueError(f"only {len(palette)} colors in palette, need {n} groups")
+    return {g: palette[i] for i, g in enumerate(group_names)}
+
+# import glasbey
+# def get_group_colors(group_names):
+#     palette = glasbey.create_palette(palette_size=len(group_names))
+#     return {g: palette[i] for i, g in enumerate(group_names)}

@@ -75,7 +75,7 @@ def make_substitution_factory(df_rg, region_by_id, rates_path,
 def assemble_everything(
     df_rg,
     region_by_id,
-    df_esm=None,
+    # df_esm=None,
     rates_path=None,
     *,
     # static-feature toggles (passed through to build_static_features)
@@ -112,7 +112,7 @@ def assemble_everything(
     X_static = build_static_features(
         df_rg,
         region_by_id=region_by_id,
-        df_esm=df_esm,
+        # df_esm=df_esm,
         include_wt_physchem=include_wt_physchem,
         codon_source_aas=codon_source_aas,
         include_gc_codon_indices=include_gc_codon_indices,

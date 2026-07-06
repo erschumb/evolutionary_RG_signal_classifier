@@ -1511,48 +1511,101 @@ def _translate(dna: str) -> str:
 _NUCLEOTIDES = ["A", "C", "G", "T"]
  
  
-def enumerate_single_nt_substitutions(
-    dna: str,
-    protein: str,
-) -> pd.DataFrame:
-    """
-    For a given DNA sequence (coding, must be multiple of 3), enumerate every
-    possible single-nucleotide substitution. For each one, compute:
+# def enumerate_single_nt_substitutions(
+#     dna: str,
+#     protein: str,
+# ) -> pd.DataFrame:
+#     """
+#     For a given DNA sequence (coding, must be multiple of 3), enumerate every
+#     possible single-nucleotide substitution. For each one, compute:
  
-      - consequence: 'synonymous', 'missense', 'nonsense', 'other'
-      - rg_event:    'no_change', 'loss', 'gain', 'movement'  (for missense only)
-      - aa_from, aa_to: for missense only
+#       - consequence: 'synonymous', 'missense', 'nonsense', 'other'
+#       - rg_event:    'no_change', 'loss', 'gain', 'movement'  (for missense only)
+#       - aa_from, aa_to: for missense only
  
-    The frameshift and in-frame indel categories do not occur — we only
-    substitute single bases.
+#     The frameshift and in-frame indel categories do not occur — we only
+#     substitute single bases.
  
-    Returns one row per (dna_position × alternative_base) combination.
-    """
+#     Returns one row per (dna_position × alternative_base) combination.
+#     """
+#     dna = dna.upper()
+#     n = len(dna)
+ 
+#     # Precompute RG positions in reference protein
+#     ref_rg = _rg_positions(protein)
+ 
+#     rows = []
+#     for i in range(n):
+#         ref_base = dna[i]
+#         context = dna[i - 1:i + 2] if 0 < i < n - 1 else None   # <-- ADD THIS
+#         for alt_base in _NUCLEOTIDES:
+#             if alt_base == ref_base:
+#                 continue
+#             mutated_dna = dna[:i] + alt_base + dna[i + 1:]
+#             mutated_protein = _translate(mutated_dna)
+ 
+#             # Position in protein affected by this nt substitution
+#             aa_pos = i // 3
+#             if aa_pos >= len(protein) or aa_pos >= len(mutated_protein):
+#                 continue
+ 
+#             ref_aa = protein[aa_pos]
+#             alt_aa = mutated_protein[aa_pos]
+ 
+#             # Consequence classification
+#             if alt_aa == ref_aa:
+#                 cons = "synonymous"
+#             elif alt_aa == "*":
+#                 cons = "nonsense"
+#             elif ref_aa == "*":
+#                 cons = "stop_lost"
+#             else:
+#                 cons = "missense"
+ 
+#             # RG event (only meaningful for missense)
+#             if cons == "missense":
+#                 alt_rg = _rg_positions(mutated_protein)
+#                 rg_event = _classify_rg_event(ref_rg, alt_rg)
+#             else:
+#                 rg_event = None
+ 
+#             rows.append({
+#                 "dna_pos": i,
+#                 "ref_base": ref_base,
+#                 "alt_base": alt_base,
+#                 "context": context, 
+#                 "aa_pos": aa_pos,
+#                 "aa_from": ref_aa,
+#                 "aa_to": alt_aa,
+#                 "consequence": cons,
+#                 "rg_event": rg_event,
+#             })
+ 
+#     return pd.DataFrame(rows)
+
+def enumerate_single_nt_substitutions(dna: str, protein: str) -> pd.DataFrame:
     dna = dna.upper()
     n = len(dna)
- 
-    # Precompute RG positions in reference protein
     ref_rg = _rg_positions(protein)
- 
+    wt_rg_ratio = _rg_ratio(protein)                                  # NEW — constant per region
+
     rows = []
     for i in range(n):
         ref_base = dna[i]
-        context = dna[i - 1:i + 2] if 0 < i < n - 1 else None   # <-- ADD THIS
+        context = dna[i - 1:i + 2] if 0 < i < n - 1 else None
         for alt_base in _NUCLEOTIDES:
             if alt_base == ref_base:
                 continue
             mutated_dna = dna[:i] + alt_base + dna[i + 1:]
             mutated_protein = _translate(mutated_dna)
- 
-            # Position in protein affected by this nt substitution
+
             aa_pos = i // 3
             if aa_pos >= len(protein) or aa_pos >= len(mutated_protein):
                 continue
- 
+
             ref_aa = protein[aa_pos]
             alt_aa = mutated_protein[aa_pos]
- 
-            # Consequence classification
+
             if alt_aa == ref_aa:
                 cons = "synonymous"
             elif alt_aa == "*":
@@ -1561,28 +1614,30 @@ def enumerate_single_nt_substitutions(
                 cons = "stop_lost"
             else:
                 cons = "missense"
- 
-            # RG event (only meaningful for missense)
+
+            rg_event = None
+            delta_n_rg = None
+            delta_rg_ratio_rel = None                                 # NEW
             if cons == "missense":
                 alt_rg = _rg_positions(mutated_protein)
                 rg_event = _classify_rg_event(ref_rg, alt_rg)
-            else:
-                rg_event = None
- 
+                delta_n_rg = len(alt_rg) - len(ref_rg)
+
+                mut_rg_ratio = _rg_ratio(mutated_protein)              # NEW
+                if pd.notna(wt_rg_ratio) and wt_rg_ratio != 0 and pd.notna(mut_rg_ratio):
+                    delta_rg_ratio_rel = (mut_rg_ratio - wt_rg_ratio) / wt_rg_ratio
+
             rows.append({
-                "dna_pos": i,
-                "ref_base": ref_base,
-                "alt_base": alt_base,
-                "context": context, 
-                "aa_pos": aa_pos,
-                "aa_from": ref_aa,
-                "aa_to": alt_aa,
-                "consequence": cons,
-                "rg_event": rg_event,
+                "dna_pos": i, "ref_base": ref_base, "alt_base": alt_base,
+                "context": context, "aa_pos": aa_pos,
+                "aa_from": ref_aa, "aa_to": alt_aa,
+                "consequence": cons, "rg_event": rg_event,
+                "delta_n_rg": delta_n_rg,
+                "delta_rg_ratio_rel": delta_rg_ratio_rel,             # NEW
             })
- 
+
     return pd.DataFrame(rows)
- 
+
  
 def _rg_positions(seq: str) -> list[int]:
     """R positions of RG motifs."""
@@ -1732,70 +1787,82 @@ _EVENT_COLORS = {
     "movement":  "#56B4E9",
 }
  
- 
+
+def _register_top_expand_scale(power=0.35):
+    """
+    Custom y-scale that expands the region near y=1 and compresses the
+    region near y=0. `power` < 1 → the smaller it is, the more the top gets
+    stretched (and the bottom compressed). Only meaningful for y in [0, 1].
+    """
+    def forward(y):
+        y = np.clip(y, 0, 1)
+        return 1 - (1 - y) ** power
+
+    def inverse(y):
+        y = np.clip(y, 0, 1)
+        return 1 - (1 - y) ** (1 / power)
+
+    return forward, inverse
+
+
 def plot_rg_events_observed_vs_expected(
     df_events: pd.DataFrame,
     null_results: dict,
     dataset: str = "gnomad",
     save: bool = True,
+    top_expand_power: float | None = 0.45,   # NEW: None = linear axis (old behavior)
 ) -> dict:
     """
     Stacked-bar plot with FOUR bars: neg observed, neg expected, pos observed,
     pos expected. Chi² goodness-of-fit test per group (observed vs expected).
+
+    top_expand_power : if set (e.g. 0.35), applies a nonlinear y-axis that
+    compresses the bottom of the stack (no_change/loss, large fractions)
+    and expands the top (gain/movement, tiny fractions) so rare categories
+    become visually readable without needing an inset. Smaller values =
+    stronger expansion near the top. Pass None to keep a plain linear axis.
     """
     df_events = df_events[df_events["rg_change_event"].notna()].copy()
- 
-    # Observed counts
+
     obs = pd.crosstab(df_events["group"], df_events["rg_change_event"])
     for ev in RG_EVENT_TYPES_ORDERED:
         if ev not in obs.columns:
             obs[ev] = 0
     obs = obs[RG_EVENT_TYPES_ORDERED]
- 
-    # Expected counts
+
     null_df = null_results["rg_events_null"]
     exp = null_df.pivot(index="group", columns="rg_event", values="expected_count")
     for ev in RG_EVENT_TYPES_ORDERED:
         if ev not in exp.columns:
             exp[ev] = 0
     exp = exp.reindex(index=obs.index)[RG_EVENT_TYPES_ORDERED].fillna(0)
- 
-    # Convert both to proportions
+
     obs_prop = obs.div(obs.sum(axis=1), axis=0)
     exp_prop = exp.div(exp.sum(axis=1), axis=0)
- 
-    # χ² goodness-of-fit per group (observed vs expected)
+
     group_stats = {}
     for group in obs.index:
         obs_counts = obs.loc[group].values.astype(float)
         exp_counts = exp.loc[group].values.astype(float)
-        # Normalize expected to match observed total
         exp_scaled = exp_counts * (obs_counts.sum() / exp_counts.sum())
-        # Drop cells where expected == 0 to avoid divide-by-zero in chisquare
         mask = exp_scaled > 0
         chi2, p = stats.chisquare(obs_counts[mask], f_exp=exp_scaled[mask])
         group_stats[group] = {
-            "chi2": float(chi2),
-            "p": float(p),
-            "sig": significance_stars(p),
-            "dof": int(mask.sum() - 1),
+            "chi2": float(chi2), "p": float(p),
+            "sig": significance_stars(p), "dof": int(mask.sum() - 1),
         }
- 
-    # ── Plot: 4 bars ───────────────────────────────────────────────────────
+
     fig, ax = plt.subplots(figsize=(FIGSIZE_SINGLE[0] + 1.0, FIGSIZE_SINGLE[1] + 0.3))
- 
-    groups = list(obs.index)  # ['neg', 'pos']
-    bar_labels = []
-    bar_data = []
+
+    groups = list(obs.index)
+    bar_labels, bar_data = [], []
     for group in groups:
-        bar_labels.append(f"{group}\nobserved")
-        bar_data.append(obs_prop.loc[group].values)
-        bar_labels.append(f"{group}\nexpected")
-        bar_data.append(exp_prop.loc[group].values)
- 
+        bar_labels.append(f"{group}\nobserved"); bar_data.append(obs_prop.loc[group].values)
+        bar_labels.append(f"{group}\nexpected"); bar_data.append(exp_prop.loc[group].values)
+
     x = np.arange(len(bar_labels))
     bottoms = np.zeros(len(bar_labels))
- 
+
     for i, event in enumerate(RG_EVENT_TYPES_ORDERED):
         vals = np.array([row[i] for row in bar_data])
         ax.bar(
@@ -1804,47 +1871,55 @@ def plot_rg_events_observed_vs_expected(
             linewidth=0.4, width=0.7, label=event,
         )
         for j, (val, bot) in enumerate(zip(vals, bottoms)):
-            if val > 0.03:
+            if val > 0:   # lowered threshold — small slices now have room to show a label
                 ax.text(
                     x[j], bot + val / 2, f"{val * 100:.1f}%",
                     ha="center", va="center", fontsize=6,
                     color="black" if event == "no_change" else "white",
                 )
         bottoms += vals
- 
+
     ax.set_xticks(x)
     ax.set_xticklabels(bar_labels, fontsize=7)
-    ax.set_ylim(0, 1.15)
     ax.set_ylabel("Fraction of missense variants")
     ax.set_xlabel("")
-    ax.set_title("RG change events: observed vs expected (enumeration null)")
- 
-    # n above each observed bar
+    ax.set_title("RG change events: observed vs expected (enumeration null)", pad=40)
+
+
+    # ── apply the nonlinear scale (bars only span data range [0, 1]) ────────
+    if top_expand_power is not None:
+        forward, inverse = _register_top_expand_scale(top_expand_power)
+        ax.set_yscale("function", functions=(forward, inverse))
+        ax.set_ylim(0, 1)
+        # nicer ticks under the nonlinear scale: denser near the top
+        ax.set_yticks([0, 0.5, 0.8, 0.9, 0.95, 0.98, 0.995, 1.0])
+    else:
+        ax.set_ylim(0, 1.15)
+
+    # n / χ² annotations — placed via a blended transform (x in data coords,
+    # y in AXES-FRACTION coords) so they sit cleanly above the bars regardless
+    # of the nonlinear y-scale.
+    trans = ax.get_xaxis_transform()  # x=data, y=axes fraction
     for idx, group in enumerate(groups):
         n_obs = int(obs.loc[group].sum())
-        ax.text(idx * 2, 1.02, f"n = {n_obs:,}",
-                ha="center", va="bottom", fontsize=6.5)
- 
-    # Annotations for χ² per group (positioned above the pair of bars)
+        ax.text(idx * 2, 1.03, f"n = {n_obs:,}",
+                ha="center", va="bottom", fontsize=6.5, transform=trans)
     for idx, group in enumerate(groups):
         s = group_stats[group]
         x_center = idx * 2 + 0.5
         ax.text(
-            x_center, 1.08,
-            f"χ² p = {s['p']:.2e} {s['sig']}",
-            ha="center", va="bottom", fontsize=6.5,
-            bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray",
-                      pad=2, linewidth=0.4),
+            x_center, 1.10, f"χ² p = {s['p']:.2e} {s['sig']}",
+            ha="center", va="bottom", fontsize=6.5, transform=trans,
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray", pad=2, linewidth=0.4),
         )
- 
-    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0),
-              frameon=False, title="Event")
- 
-    sns.despine()
+
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False, title="Event")
+
+    sns.despine(ax=ax)
     plt.tight_layout()
     if save:
         save_figure(fig, "rg_events_observed_vs_expected", dataset=dataset)
- 
+
     print(f"\n── RG change events: observed vs expected ({dataset}) ──")
     print("\nObserved proportions:")
     print(obs_prop.round(4))
@@ -1852,16 +1927,143 @@ def plot_rg_events_observed_vs_expected(
     print(exp_prop.round(4))
     print("\nχ² goodness-of-fit per group (observed vs expected):")
     for g, s in group_stats.items():
-        print(f"  {g}: χ² = {s['chi2']:.2f}, df = {s['dof']}, "
-              f"p = {s['p']:.2e} {s['sig']}")
- 
+        print(f"  {g}: χ² = {s['chi2']:.2f}, df = {s['dof']}, p = {s['p']:.2e} {s['sig']}")
+
     return {
-        "observed": obs,
-        "expected": exp,
-        "observed_prop": obs_prop,
-        "expected_prop": exp_prop,
+        "observed": obs, "expected": exp,
+        "observed_prop": obs_prop, "expected_prop": exp_prop,
         "group_stats": group_stats,
     }
+ 
+# def plot_rg_events_observed_vs_expected(
+#     df_events: pd.DataFrame,
+#     null_results: dict,
+#     dataset: str = "gnomad",
+#     save: bool = True,
+# ) -> dict:
+#     """
+#     Stacked-bar plot with FOUR bars: neg observed, neg expected, pos observed,
+#     pos expected. Chi² goodness-of-fit test per group (observed vs expected).
+#     """
+#     df_events = df_events[df_events["rg_change_event"].notna()].copy()
+ 
+#     # Observed counts
+#     obs = pd.crosstab(df_events["group"], df_events["rg_change_event"])
+#     for ev in RG_EVENT_TYPES_ORDERED:
+#         if ev not in obs.columns:
+#             obs[ev] = 0
+#     obs = obs[RG_EVENT_TYPES_ORDERED]
+ 
+#     # Expected counts
+#     null_df = null_results["rg_events_null"]
+#     exp = null_df.pivot(index="group", columns="rg_event", values="expected_count")
+#     for ev in RG_EVENT_TYPES_ORDERED:
+#         if ev not in exp.columns:
+#             exp[ev] = 0
+#     exp = exp.reindex(index=obs.index)[RG_EVENT_TYPES_ORDERED].fillna(0)
+ 
+#     # Convert both to proportions
+#     obs_prop = obs.div(obs.sum(axis=1), axis=0)
+#     exp_prop = exp.div(exp.sum(axis=1), axis=0)
+ 
+#     # χ² goodness-of-fit per group (observed vs expected)
+#     group_stats = {}
+#     for group in obs.index:
+#         obs_counts = obs.loc[group].values.astype(float)
+#         exp_counts = exp.loc[group].values.astype(float)
+#         # Normalize expected to match observed total
+#         exp_scaled = exp_counts * (obs_counts.sum() / exp_counts.sum())
+#         # Drop cells where expected == 0 to avoid divide-by-zero in chisquare
+#         mask = exp_scaled > 0
+#         chi2, p = stats.chisquare(obs_counts[mask], f_exp=exp_scaled[mask])
+#         group_stats[group] = {
+#             "chi2": float(chi2),
+#             "p": float(p),
+#             "sig": significance_stars(p),
+#             "dof": int(mask.sum() - 1),
+#         }
+ 
+#     # ── Plot: 4 bars ───────────────────────────────────────────────────────
+#     fig, ax = plt.subplots(figsize=(FIGSIZE_SINGLE[0] + 1.0, FIGSIZE_SINGLE[1] + 0.3))
+ 
+#     groups = list(obs.index)  # ['neg', 'pos']
+#     bar_labels = []
+#     bar_data = []
+#     for group in groups:
+#         bar_labels.append(f"{group}\nobserved")
+#         bar_data.append(obs_prop.loc[group].values)
+#         bar_labels.append(f"{group}\nexpected")
+#         bar_data.append(exp_prop.loc[group].values)
+ 
+#     x = np.arange(len(bar_labels))
+#     bottoms = np.zeros(len(bar_labels))
+ 
+#     for i, event in enumerate(RG_EVENT_TYPES_ORDERED):
+#         vals = np.array([row[i] for row in bar_data])
+#         ax.bar(
+#             x, vals, bottom=bottoms,
+#             color=_EVENT_COLORS[event], edgecolor="black",
+#             linewidth=0.4, width=0.7, label=event,
+#         )
+#         for j, (val, bot) in enumerate(zip(vals, bottoms)):
+#             if val > 0.03:
+#                 ax.text(
+#                     x[j], bot + val / 2, f"{val * 100:.1f}%",
+#                     ha="center", va="center", fontsize=6,
+#                     color="black" if event == "no_change" else "white",
+#                 )
+#         bottoms += vals
+ 
+#     ax.set_xticks(x)
+#     ax.set_xticklabels(bar_labels, fontsize=7)
+#     ax.set_ylim(0, 1.15)
+#     ax.set_ylabel("Fraction of missense variants")
+#     ax.set_xlabel("")
+#     ax.set_title("RG change events: observed vs expected (enumeration null)")
+ 
+#     # n above each observed bar
+#     for idx, group in enumerate(groups):
+#         n_obs = int(obs.loc[group].sum())
+#         ax.text(idx * 2, 1.02, f"n = {n_obs:,}",
+#                 ha="center", va="bottom", fontsize=6.5)
+ 
+#     # Annotations for χ² per group (positioned above the pair of bars)
+#     for idx, group in enumerate(groups):
+#         s = group_stats[group]
+#         x_center = idx * 2 + 0.5
+#         ax.text(
+#             x_center, 1.08,
+#             f"χ² p = {s['p']:.2e} {s['sig']}",
+#             ha="center", va="bottom", fontsize=6.5,
+#             bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray",
+#                       pad=2, linewidth=0.4),
+#         )
+ 
+#     ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0),
+#               frameon=False, title="Event")
+ 
+#     sns.despine()
+#     plt.tight_layout()
+#     if save:
+#         save_figure(fig, "rg_events_observed_vs_expected", dataset=dataset)
+ 
+#     print(f"\n── RG change events: observed vs expected ({dataset}) ──")
+#     print("\nObserved proportions:")
+#     print(obs_prop.round(4))
+#     print("\nExpected proportions (enumeration null):")
+#     print(exp_prop.round(4))
+#     print("\nχ² goodness-of-fit per group (observed vs expected):")
+#     for g, s in group_stats.items():
+#         print(f"  {g}: χ² = {s['chi2']:.2f}, df = {s['dof']}, "
+#               f"p = {s['p']:.2e} {s['sig']}")
+ 
+#     return {
+#         "observed": obs,
+#         "expected": exp,
+#         "observed_prop": obs_prop,
+#         "expected_prop": exp_prop,
+#         "group_stats": group_stats,
+#     }
  
  
 # ════════════════════════════════════════════════════════════════════════════
@@ -1999,7 +2201,8 @@ def plot_consequences_observed_vs_expected(
  
     ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0),
               frameon=False, title="Consequence")
- 
+    # plt.yscale("log")
+
     sns.despine()
     plt.tight_layout()
     if save:
@@ -2179,27 +2382,26 @@ def _per_region_consequence_proportions(
 # ════════════════════════════════════════════════════════════════════════════
 # Shared plotting helper: 4-box panel (neg_obs, neg_exp, pos_obs, pos_exp)
 # ════════════════════════════════════════════════════════════════════════════
- 
-def _four_box_panel(ax, data, y_col, title):
+def _four_box_panel(ax, data, y_col, title, signed=False):
     """
     Draw the 4-box comparison on `ax`:
         neg observed, neg expected, pos observed, pos expected.
- 
+
     `data` is a long-form df with columns ['group', 'source', <y_col>].
+    signed=False : original behavior, assumes y_col >= 0 (proportions etc.),
+                   ylim floored at 0.
+    signed=True  : y_col can be negative (e.g. deltas); ylim spans both
+                   tails with headroom on top for brackets, no zero floor.
     Returns (p_neg_obs_vs_exp, p_pos_obs_vs_exp, p_pos_vs_neg_observed).
     """
-    # Build an ordered categorical "box" column
     def _label(row):
         return f"{row['group']}\n{row['source'][:3] + '.'}"
     data = data.copy()
     data["box"] = data.apply(_label, axis=1)
-    # print(data['box'])
- 
-    box_order = [
-        "neg\nobs.", "neg\nexp.", "pos\nobs.", "pos\nexp."
-    ]
+
+    box_order = ["neg\nobs.", "neg\nexp.", "pos\nobs.", "pos\nexp."]
     colors = _box_colors_ordered()
- 
+
     sns.boxplot(
         data=data, x="box", y=y_col, order=box_order,
         palette=colors, width=0.55, fliersize=0,
@@ -2212,7 +2414,7 @@ def _four_box_panel(ax, data, y_col, title):
         data=data, x="box", y=y_col, order=box_order,
         color="black", size=1.0, alpha=0.3, jitter=0.15, ax=ax,
     )
-    # Statistical tests
+
     def _pair(g_a, s_a, g_b, s_b):
         a = data[(data["group"] == g_a) & (data["source"] == s_a)][y_col].dropna()
         b = data[(data["group"] == g_b) & (data["source"] == s_b)][y_col].dropna()
@@ -2220,36 +2422,55 @@ def _four_box_panel(ax, data, y_col, title):
             return (np.nan, "n.s.")
         _, p = stats.mannwhitneyu(a, b, alternative="two-sided")
         return (float(p), significance_stars(p))
- 
+
     p_neg_dev, sig_neg_dev = _pair("neg", "observed", "neg", "expected")
     p_pos_dev, sig_pos_dev = _pair("pos", "observed", "pos", "expected")
     p_between,  sig_between = _pair("pos", "observed", "neg", "observed")
- 
-    # Significance annotations
-    ymax = data[y_col].quantile(0.98)
-    if pd.isna(ymax) or ymax <= 0:
-        ymax = 1.0
-    # Bracket: neg_obs (0) vs neg_exp (1)
-    ax.plot([0, 1], [ymax * 1.05, ymax * 1.05], color="black", lw=0.5)
-    ax.text(0.5, ymax * 1.07, sig_neg_dev, ha="center", va="bottom", fontsize=7)
-    # Bracket: pos_obs (2) vs pos_exp (3)
-    ax.plot([2, 3], [ymax * 1.05, ymax * 1.05], color="black", lw=0.5)
-    ax.text(2.5, ymax * 1.07, sig_pos_dev, ha="center", va="bottom", fontsize=7)
-    # Bracket: neg_obs (0) vs pos_obs (2) — above the inner brackets
-    ax.plot([0, 2], [ymax * 1.18, ymax * 1.18], color="black", lw=0.5)
-    ax.text(1.0, ymax * 1.20, sig_between, ha="center", va="bottom", fontsize=7)
- 
-    ax.set_ylim(0, ymax * 1.30)
+
+    vals = data[y_col].dropna()
+
+    if signed:
+        lo = vals.quantile(0.02)
+        hi = vals.quantile(0.98)
+        if pd.isna(lo) or pd.isna(hi) or lo == hi:
+            lo, hi = -1.0, 1.0
+        span = hi - lo
+        pad = span * 0.25 if span > 0 else 1.0
+
+        bracket_y1 = hi + pad * 0.75   # inner brackets (neg_obs vs neg_exp, pos_obs vs pos_exp)
+        bracket_y2 = hi + pad * 1.5   # outer bracket (pos_obs vs neg_obs)
+        top = hi + pad * 1.3
+        bottom = lo - pad * 0.3
+
+        ax.plot([0, 1], [bracket_y1, bracket_y1], color="black", lw=0.5)
+        ax.text(0.5, bracket_y1 + pad * 0.05, sig_neg_dev, ha="center", va="bottom", fontsize=7)
+        ax.plot([2, 3], [bracket_y1, bracket_y1], color="black", lw=0.5)
+        ax.text(2.5, bracket_y1 + pad * 0.05, sig_pos_dev, ha="center", va="bottom", fontsize=7)
+        ax.plot([0, 2], [bracket_y2, bracket_y2], color="black", lw=0.5)
+        ax.text(1.0, bracket_y2 + pad * 0.05, sig_between, ha="center", va="bottom", fontsize=7)
+
+        ax.set_ylim(bottom, top)
+    else:
+        ymax = vals.quantile(0.98)
+        if pd.isna(ymax) or ymax <= 0:
+            ymax = 1.0
+        ax.plot([0, 1], [ymax * 1.05, ymax * 1.05], color="black", lw=0.5)
+        ax.text(0.5, ymax * 1.07, sig_neg_dev, ha="center", va="bottom", fontsize=7)
+        ax.plot([2, 3], [ymax * 1.05, ymax * 1.05], color="black", lw=0.5)
+        ax.text(2.5, ymax * 1.07, sig_pos_dev, ha="center", va="bottom", fontsize=7)
+        ax.plot([0, 2], [ymax * 1.18, ymax * 1.18], color="black", lw=0.5)
+        ax.text(1.0, ymax * 1.20, sig_between, ha="center", va="bottom", fontsize=7)
+        ax.set_ylim(0, ymax * 1.30)
+
     ax.set_title(title)
     ax.set_xlabel("")
     ax.tick_params(axis="x", labelsize=7.5)
- 
+
     return {
         "p_neg_observed_vs_expected": p_neg_dev,
         "p_pos_observed_vs_expected": p_pos_dev,
         "p_pos_vs_neg_observed":      p_between,
     }
- 
  
 # ════════════════════════════════════════════════════════════════════════════
 # Plot 1: RG events observed vs expected, one subplot per event
@@ -2576,7 +2797,7 @@ def plot_delta_rg_ratio_per_region(
     y_bar = ymax * 1.1
     ax.plot([0, 1], [y_bar, y_bar], color="black", lw=0.6)
     ax.text(0.5, y_bar * 1.05, sig, ha="center", va="bottom", fontsize=8)
-    ax.set_ylim(-ymax * 1.3, ymax * 1.3)
+    ax.set_ylim(-0.15, ymax * 1.3)
  
     ax.set_title("Mean relative Δ RG ratio per region\n(all missense)",pad=12)
     ax.set_ylabel("Relative mean Δ(R/G ratio)")
@@ -2714,3 +2935,311 @@ def compute_rg_features_per_region(
     return out
  
 
+def compute_delta_n_rg_motifs(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    normalize_by_length: bool = False,
+) -> pd.DataFrame:
+    """
+    [Dataset-agnostic]
+    For every missense variant, compute the raw change in RG duplet count
+    caused by that single substitution (n_rg_after - n_rg_before), reusing
+    the same before/after enumeration as compute_rg_change_events.
+
+    If normalize_by_length=True, also returns delta_n_rg_density = delta /
+    region_length (residues), so the metric is comparable across regions of
+    very different lengths.
+
+    Returns a missense-only dataframe with columns:
+        region_id, group, n_rg_before, n_rg_after, delta_n_rg
+        (+ delta_n_rg_density, region_length if normalize_by_length)
+    """
+    df_events = compute_rg_change_events(df_rg, region_by_id)
+    df_events = df_events[df_events["rg_change_event"].notna()].copy()
+    df_events["delta_n_rg"] = df_events["n_rg_after"] - df_events["n_rg_before"]
+
+    if normalize_by_length:
+        region_stats = compute_region_rg_stats(region_by_id)[
+            ["region_id", "region_length"]
+        ]
+        df_events = df_events.merge(region_stats, on="region_id", how="left")
+        df_events["delta_n_rg_density"] = (
+            df_events["delta_n_rg"] / df_events["region_length"]
+        )
+
+    return df_events
+
+
+def plot_delta_n_rg_motifs_per_region(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+    use_density: bool = False,
+) -> tuple[plt.Figure, dict]:
+    """
+    [Dataset-agnostic]
+    Per-region mean Δ RG duplet count (or density) across all missense
+    variants in the region. One data point per region; compared pos vs neg.
+
+    use_density=False : mean of (n_rg_after - n_rg_before) per region
+                        — raw duplet-count units, comparable when regions
+                        are similar length.
+    use_density=True  : same, but each variant's delta is first divided by
+                        region_length before averaging — comparable across
+                        regions of very different length.
+    """
+    df = compute_delta_n_rg_motifs(
+        df_rg, region_by_id, normalize_by_length=use_density
+    )
+
+    value_col = "delta_n_rg_density" if use_density else "delta_n_rg"
+    per_region = (
+        df.groupby(["region_id", "group"])[value_col]
+          .mean()
+          .reset_index(name=f"mean_{value_col}")
+    )
+
+    label = ("Mean relative Δ RG density per region\n(all missense)"
+             if use_density else
+             "Mean Δ RG duplet count per region\n(all missense)")
+    ylabel = ("Mean Δ(RG density)" if use_density
+             else "Mean Δ(RG duplet count)")
+    filename = ("delta_rg_density_per_region" if use_density
+               else "delta_n_rg_motifs_per_region")
+
+    fig, results = _single_boxplot(
+        data=per_region, x="group", y=f"mean_{value_col}",
+        order=["neg", "pos"],
+        title=label, ylabel=ylabel,
+        dataset=dataset, filename=filename, save=save,
+    )
+
+    # add a zero reference line (matches the style of the delta-RG-ratio plots)
+    ax = fig.axes[0]
+    ax.axhline(0, color="gray", linestyle="--", linewidth=0.6, alpha=0.6, zorder=0)
+
+    return fig, results
+
+
+def _per_region_delta_n_rg_observed_vs_expected(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    null_results: dict,
+    use_density: bool = False,
+) -> pd.DataFrame:
+    """
+    Long-form df with columns: region_id, group, source ('observed'/'expected'),
+    value (mean delta_n_rg, or density if use_density=True), for the
+    _four_box_panel helper.
+
+    Observed : mean(n_rg_after - n_rg_before) across the region's actual
+    missense variants (compute_delta_n_rg_motifs).
+
+    Expected : mutability-weighted mean delta_n_rg across ALL possible
+    missense substitutions in the region (from null_results'
+    per_region_enumerations, which already carries Samocha-rate weights
+    in the '_w' column if build_enumeration_null was given rates=...).
+    This is a per-substitution mean, so — unlike the count-based nulls
+    elsewhere in this file — it does NOT need scaling by n_obs_missense;
+    it's already "expected delta per missense event," directly comparable
+    to the observed per-variant mean.
+    """
+    value_col = "delta_n_rg_density" if use_density else "delta_n_rg"
+
+    # ── observed ─────────────────────────────────────────────────────────
+    obs_df = compute_delta_n_rg_motifs(
+        df_rg, region_by_id, normalize_by_length=use_density
+    )
+    observed = (
+        obs_df.groupby(["region_id", "group"])[value_col]
+              .mean()
+              .reset_index(name="value")
+    )
+    observed["source"] = "observed"
+
+    # ── expected (mutability-weighted, from the enumeration null) ────────
+    per_region_enum = null_results["per_region_enumerations"]
+    group_lookup = (
+        df_rg[["region_id", "group"]].drop_duplicates()
+        .set_index("region_id")["group"].to_dict()
+    )
+    region_lengths = (
+        compute_region_rg_stats(region_by_id)
+        .set_index("region_id")["region_length"].to_dict()
+    ) if use_density else {}
+
+    exp_rows = []
+    for rid, enum_df in per_region_enum.items():
+        group = group_lookup.get(rid)
+        if group is None:
+            continue
+        missense = enum_df[enum_df["consequence"] == "missense"]
+        missense = missense.dropna(subset=["delta_n_rg"])
+        if len(missense) == 0:
+            continue
+        w = missense["_w"] if "_w" in missense.columns else pd.Series(1.0, index=missense.index)
+        total_w = w.sum()
+        if total_w == 0:
+            continue
+        exp_delta = (missense["delta_n_rg"] * w).sum() / total_w
+        if use_density:
+            length = region_lengths.get(rid)
+            if not length:
+                continue
+            exp_delta = exp_delta / length
+        exp_rows.append({"region_id": rid, "group": group, "value": exp_delta})
+
+    expected = pd.DataFrame(exp_rows)
+    expected["source"] = "expected"
+
+    return pd.concat([observed, expected], ignore_index=True)
+
+
+def plot_delta_n_rg_motifs_vs_expected(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    null_results: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+    use_density: bool = False,
+) -> dict:
+    """
+    4-box comparison: neg observed, neg expected, pos observed, pos expected,
+    for mean Δ RG duplet count (or density) per region — using the same
+    mutability-weighted background (Samocha trinucleotide rates) as your
+    other observed-vs-expected panels.
+
+    null_results : output of build_enumeration_null(region_by_id, df_observed,
+    rates=...). Pass the mutability-weighted version (rates=load_mutation_rates())
+    for a proper background-mutation-rate comparison, or rates=None for a
+    pure-composition/uniform null.
+    """
+    long_df = _per_region_delta_n_rg_observed_vs_expected(
+        df_rg, region_by_id, null_results, use_density=use_density
+    )
+
+    label = "Δ RG density" if use_density else "Δ RG duplet count"
+    fig, ax = plt.subplots(figsize=FIGSIZE_SLIM)
+    stats_dict = _four_box_panel(ax, long_df, "value", f"Mean {label} per region", signed=True)
+
+    ax.axhline(0, color="gray", linestyle="--", linewidth=0.6, alpha=0.6, zorder=0)
+    ax.set_ylabel(f"Mean {label}")
+    # ax.set_ylim(-0.1,0)
+
+
+    sns.despine()
+    plt.tight_layout()
+
+    filename = ("delta_rg_density_vs_expected" if use_density
+               else "delta_n_rg_motifs_vs_expected")
+    if save:
+        save_figure(fig, filename, dataset=dataset)
+
+    print(f"\n── Mean {label} per region: observed vs expected ({dataset}) ──")
+    print(f"  neg observed vs expected: p = {stats_dict['p_neg_observed_vs_expected']:.2e}")
+    print(f"  pos observed vs expected: p = {stats_dict['p_pos_observed_vs_expected']:.2e}")
+    print(f"  pos vs neg (observed):    p = {stats_dict['p_pos_vs_neg_observed']:.2e}")
+
+    return stats_dict
+
+
+
+def _per_region_delta_rg_ratio_observed_vs_expected(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    null_results: dict,
+) -> pd.DataFrame:
+    """
+    Long-form df with columns: region_id, group, source ('observed'/'expected'),
+    value (mean delta_rg_ratio_rel), for the _four_box_panel helper.
+
+    Observed : mean relative Δ(R/G ratio) across the region's actual
+    missense variants (compute_delta_rg_ratio), matching
+    plot_delta_rg_ratio_per_region exactly (ALL missense, not filtered
+    to R/G-affecting only).
+
+    Expected : mutability-weighted mean relative Δ(R/G ratio) across ALL
+    possible missense substitutions in the region, using the Samocha-rate
+    weights ('_w') from build_enumeration_null if rates were supplied.
+    """
+    # ── observed ─────────────────────────────────────────────────────────
+    obs_df = compute_delta_rg_ratio(df_rg, region_by_id)
+    obs_df = obs_df[obs_df["delta_rg_ratio_rel"].notna()]
+    observed = (
+        obs_df.groupby(["region_id", "group"])["delta_rg_ratio_rel"]
+              .mean()
+              .reset_index(name="value")
+    )
+    observed["source"] = "observed"
+
+    # ── expected (mutability-weighted, from the enumeration null) ────────
+    per_region_enum = null_results["per_region_enumerations"]
+    group_lookup = (
+        df_rg[["region_id", "group"]].drop_duplicates()
+        .set_index("region_id")["group"].to_dict()
+    )
+
+    exp_rows = []
+    for rid, enum_df in per_region_enum.items():
+        group = group_lookup.get(rid)
+        if group is None:
+            continue
+        missense = enum_df[enum_df["consequence"] == "missense"]
+        missense = missense.dropna(subset=["delta_rg_ratio_rel"])
+        if len(missense) == 0:
+            continue
+        w = missense["_w"] if "_w" in missense.columns else pd.Series(1.0, index=missense.index)
+        total_w = w.sum()
+        if total_w == 0:
+            continue
+        exp_delta = (missense["delta_rg_ratio_rel"] * w).sum() / total_w
+        exp_rows.append({"region_id": rid, "group": group, "value": exp_delta})
+
+    expected = pd.DataFrame(exp_rows)
+    expected["source"] = "expected"
+
+    return pd.concat([observed, expected], ignore_index=True)
+
+
+def plot_delta_rg_ratio_vs_expected(
+    df_rg: pd.DataFrame,
+    region_by_id: dict,
+    null_results: dict,
+    dataset: str = "gnomad",
+    save: bool = True,
+) -> dict:
+    """
+    4-box comparison: neg observed, neg expected, pos observed, pos expected,
+    for mean relative Δ(R/G ratio) per region — using the same
+    mutability-weighted background (Samocha trinucleotide rates) as your
+    other observed-vs-expected panels.
+
+    null_results : output of build_enumeration_null(region_by_id, df_observed,
+    rates=...). Pass the mutability-weighted version for a proper
+    background-mutation-rate comparison, or rates=None for a pure-composition
+    null.
+    """
+    long_df = _per_region_delta_rg_ratio_observed_vs_expected(
+        df_rg, region_by_id, null_results
+    )
+
+    fig, ax = plt.subplots(figsize=FIGSIZE_SLIM)
+    stats_dict = _four_box_panel(
+        ax, long_df, "value",
+        "Mean relative Δ(R/G ratio) per region", signed=True,
+    )
+    ax.axhline(0, color="gray", linestyle="--", linewidth=0.6, alpha=0.6, zorder=0)
+    ax.set_ylabel("Relative mean Δ(R/G ratio)")
+
+    sns.despine()
+    plt.tight_layout()
+    if save:
+        save_figure(fig, "delta_rg_ratio_vs_expected", dataset=dataset)
+
+    print(f"\n── Mean relative Δ(R/G ratio) per region: observed vs expected ({dataset}) ──")
+    print(f"  neg observed vs expected: p = {stats_dict['p_neg_observed_vs_expected']:.2e}")
+    print(f"  pos observed vs expected: p = {stats_dict['p_pos_observed_vs_expected']:.2e}")
+    print(f"  pos vs neg (observed):    p = {stats_dict['p_pos_vs_neg_observed']:.2e}")
+
+    return stats_dict

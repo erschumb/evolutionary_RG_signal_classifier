@@ -94,8 +94,10 @@ def run_nested_cv(
                               random_state=random_state)
     fold_aucs = []
     oof = pd.Series(np.nan, index=region_ids, dtype=float)
+    oof_fold = pd.Series(np.nan, index=region_ids, dtype=float)
  
-    for tr_idx, te_idx in cv.split(Xs.values, y.values, groups.values):
+    # for tr_idx, te_idx in cv.split(Xs.values, y.values, groups.values):
+    for fold_i, (tr_idx, te_idx) in enumerate(cv.split(Xs.values, y.values, groups.values)):  # CHANGED: enumerate
         tr_ids = region_ids[tr_idx]
         te_ids = region_ids[te_idx]
  
@@ -142,6 +144,7 @@ def run_nested_cv(
         p = rf.predict_proba(X_te_i)[:, 1]
         fold_aucs.append(roc_auc_score(y.loc[te_ids].values, p))
         oof.loc[te_ids] = p
+        oof_fold.loc[te_ids] = fold_i
  
     out = {
         "include_groups": include_groups,
@@ -153,6 +156,7 @@ def run_nested_cv(
     }
     if return_oof:
         out["oof"] = oof
+        out["oof_fold"] = oof_fold
     return out
  
  

@@ -82,12 +82,7 @@ def run_group_comparison(X_static, y, groups, factory=None,
     return results, table
 
 
-def plot_necessity_sufficiency(table, ax=None):
-    """
-    Two-axis summary: for each group, its isolation AUC (sufficiency, x) vs its
-    LOGO delta (necessity, y). Groups near origin = neither necessary nor
-    sufficient; the 'no single driver' sweet spot.
-    """
+def plot_necessity_sufficiency(table, ax=None, group_colors=None):
     iso = table[table.type == "isolation"].set_index("group")["auc"]
     logo = table[table.type == "logo"].set_index("group")["delta_vs_full"]
     common = [g for g in iso.index if g in logo.index]
@@ -99,7 +94,8 @@ def plot_necessity_sufficiency(table, ax=None):
     full_auc = float(table[table.type == "full"]["auc"].iloc[0])
 
     for g in common:
-        ax.scatter(iso[g], -logo[g], s=60, zorder=3)
+        color = group_colors.get(g, "#333333") if group_colors else None
+        ax.scatter(iso[g], -logo[g], s=60, zorder=3, color=color)
         ax.annotate(g, (iso[g], -logo[g]), fontsize=8,
                     xytext=(4, 4), textcoords="offset points")
     ax.axvline(full_auc, ls="--", color="#999", lw=1)
@@ -113,11 +109,113 @@ def plot_necessity_sufficiency(table, ax=None):
     return fig
 
 
+# def plot_group_rocs(results, y, configs_to_show=None,
+#                     title="Out-of-fold ROC by feature group", ax=None,
+#                     sort_by_auc=True):
+#     """One pooled out-of-fold ROC curve per configuration in results.
+#     configs_to_show: optional list of labels to restrict the plot (else all)."""
+#     if ax is None:
+#         fig, ax = plt.subplots(figsize=(6.5, 6.5))
+#     else:
+#         fig = ax.figure
+
+#     items = [(k, v) for k, v in results.items()
+#              if configs_to_show is None or k in configs_to_show]
+#     if sort_by_auc:
+#         items.sort(key=lambda kv: kv[1]["mean_auc"], reverse=True)
+
+#     cmap = plt.cm.viridis(np.linspace(0, 0.85, len(items)))
+#     for (label, res), color in zip(items, cmap):
+#         oof = res["oof"].dropna()
+#         yt = y.reindex(oof.index).values
+#         pooled_auc = roc_auc_score(yt, oof.values)
+#         fpr, tpr, _ = roc_curve(yt, oof.values)
+#         ax.plot(fpr, tpr, color=color, lw=1.8,
+#                 label=f"{label}  (AUC {pooled_auc:.3f})")
+#     ax.plot([0, 1], [0, 1], ls="--", color="#999", lw=1, zorder=0)
+#     ax.set_xlabel("False positive rate"); ax.set_ylabel("True positive rate")
+#     ax.set_title(title); ax.set_xlim(-0.01, 1.01); ax.set_ylim(-0.01, 1.01)
+#     ax.set_aspect("equal"); ax.legend(loc="lower right", fontsize=7, frameon=False)
+#     for s in ("top", "right"):
+#         ax.spines[s].set_visible(False)
+#     return fig
+
+
+from matplotlib.lines import Line2D
+
+# def plot_group_rocs(results, y, configs_to_show=None,
+#                     title="Out-of-fold ROC by feature group", ax=None,
+#                     sort_by_auc=True, group_colors=None, legend=True):
+#     if ax is None:
+#         fig, ax = plt.subplots(figsize=(6.5, 6.5))
+#     else:
+#         fig = ax.figure
+
+#     items = [(k, v) for k, v in results.items()
+#              if configs_to_show is None or k in configs_to_show]
+#     if sort_by_auc:
+#         items.sort(key=lambda kv: kv[1]["mean_auc"], reverse=True)
+
+#     def _group_from_label(label):
+#         if label.endswith(" only"):
+#             return label[: -len(" only")]
+#         if label.startswith("− "):
+#             return label[2:]
+#         return label  # e.g. "FULL (all groups)"
+
+#     if group_colors is None:
+#         cmap = plt.cm.viridis(np.linspace(0, 0.85, len(items)))
+#         colors = {k: c for (k, _), c in zip(items, cmap)}
+#     else:
+#         colors = {k: group_colors.get(_group_from_label(k), "#333333")
+#                   for k, _ in items}
+
+#     handles = []
+#     for label, res in items:
+#         oof = res["oof"].dropna()
+#         yt = y.reindex(oof.index).values
+#         pooled_auc = roc_auc_score(yt, oof.values)
+#         fpr, tpr, _ = roc_curve(yt, oof.values)
+#         color = colors[label]
+#         ax.plot(fpr, tpr, color=color, lw=1.8)
+#         handles.append(Line2D([0], [0], color=color, lw=1.8,
+#                               label=f"{_group_from_label(label)} ({pooled_auc:.3f})"))
+
+#     ax.plot([0, 1], [0, 1], ls="--", color="#999", lw=1, zorder=0)
+#     ax.set_xlabel("False positive rate"); ax.set_ylabel("True positive rate")
+#     ax.set_title(title); ax.set_xlim(-0.01, 1.01); ax.set_ylim(-0.01, 1.01)
+#     ax.set_aspect("equal")
+#     if legend:
+#         ax.legend(handles=handles, loc="lower right", fontsize=7, frameon=False)
+#     for s in ("top", "right"):
+#         ax.spines[s].set_visible(False)
+#     return fig
+
+def _per_fold_roc(res, y, n_points=100):
+    """Interpolate each fold's ROC onto a common FPR grid.
+    Returns (fpr_grid, tpr_mean, tpr_std)."""
+    oof, fold_id = res["oof"], res["oof_fold"]
+    fpr_grid = np.linspace(0, 1, n_points)
+    tprs = []
+    for f in sorted(fold_id.dropna().unique()):
+        idx = fold_id[fold_id == f].index
+        idx = idx[oof.loc[idx].notna()]
+        yt = y.reindex(idx).values
+        yp = oof.loc[idx].values
+        if len(np.unique(yt)) < 2:
+            continue
+        fpr, tpr, _ = roc_curve(yt, yp)
+        tpr_i = np.interp(fpr_grid, fpr, tpr)
+        tpr_i[0] = 0.0
+        tprs.append(tpr_i)
+    tprs = np.array(tprs)
+    return fpr_grid, tprs.mean(axis=0), tprs.std(axis=0)
+
+
 def plot_group_rocs(results, y, configs_to_show=None,
                     title="Out-of-fold ROC by feature group", ax=None,
-                    sort_by_auc=True):
-    """One pooled out-of-fold ROC curve per configuration in results.
-    configs_to_show: optional list of labels to restrict the plot (else all)."""
+                    sort_by_auc=True, group_colors=None, legend=True,
+                    full_label="FULL (all groups)"):
     if ax is None:
         fig, ax = plt.subplots(figsize=(6.5, 6.5))
     else:
@@ -128,18 +226,53 @@ def plot_group_rocs(results, y, configs_to_show=None,
     if sort_by_auc:
         items.sort(key=lambda kv: kv[1]["mean_auc"], reverse=True)
 
-    cmap = plt.cm.viridis(np.linspace(0, 0.85, len(items)))
-    for (label, res), color in zip(items, cmap):
+    def _group_from_label(label):
+        if label.endswith(" only"):
+            return label[: -len(" only")]
+        if label.startswith("− "):
+            return label[2:]
+        return label
+
+    non_full = [(k, v) for k, v in items if k != full_label]
+    if group_colors is None:
+        cmap = plt.cm.viridis(np.linspace(0, 0.85, len(non_full)))
+        colors = {k: c for (k, _), c in zip(non_full, cmap)}
+    else:
+        colors = {k: group_colors.get(_group_from_label(k), "#333333")
+                  for k, _ in non_full}
+
+    handles = []
+
+    # FULL: black line + std band from per-fold ROC curves
+    full_res = dict(items).get(full_label)
+    if full_res is not None:
+        fpr_grid, tpr_mean, tpr_std = _per_fold_roc(full_res, y)
+        ax.fill_between(fpr_grid,
+                        np.clip(tpr_mean - tpr_std, 0, 1),
+                        np.clip(tpr_mean + tpr_std, 0, 1),
+                        color="black", alpha=0.15, lw=0, zorder=1)
+        ax.plot(fpr_grid, tpr_mean, color="black", lw=2.2, zorder=4)
+        handles.append(Line2D([0], [0], color="black", lw=2.2,
+                              label=f"{full_label} "
+                                    f"({full_res['mean_auc']:.3f} ± {full_res['std_auc']:.3f})"))
+
+    # everything else: pooled oof curve, colored by group
+    for label, res in non_full:
         oof = res["oof"].dropna()
         yt = y.reindex(oof.index).values
         pooled_auc = roc_auc_score(yt, oof.values)
         fpr, tpr, _ = roc_curve(yt, oof.values)
-        ax.plot(fpr, tpr, color=color, lw=1.8,
-                label=f"{label}  (AUC {pooled_auc:.3f})")
+        color = colors[label]
+        ax.plot(fpr, tpr, color=color, lw=1.8, zorder=3)
+        handles.append(Line2D([0], [0], color=color, lw=1.8,
+                              label=f"{_group_from_label(label)} ({pooled_auc:.3f})"))
+
     ax.plot([0, 1], [0, 1], ls="--", color="#999", lw=1, zorder=0)
     ax.set_xlabel("False positive rate"); ax.set_ylabel("True positive rate")
     ax.set_title(title); ax.set_xlim(-0.01, 1.01); ax.set_ylim(-0.01, 1.01)
-    ax.set_aspect("equal"); ax.legend(loc="lower right", fontsize=7, frameon=False)
+    ax.set_aspect("equal")
+    if legend:
+        ax.legend(handles=handles, loc="lower right", fontsize=7, frameon=False)
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
     return fig
