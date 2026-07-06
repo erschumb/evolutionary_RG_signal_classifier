@@ -2597,7 +2597,8 @@ def plot_obs_exp_scatter(
     plt.tight_layout()
     if save:
         save_figure(fig, "obs_exp_scatter", dataset=dataset)
-    return d[d["af"].isin(hl)], fig
+    d = d.rename(columns={"af": "from", "at": "to"})
+    return d, fig
 
 
 

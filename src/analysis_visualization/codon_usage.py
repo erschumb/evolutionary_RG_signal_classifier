@@ -416,7 +416,7 @@ def plot_codon_usage(
             bar_keys   = ["pos", "reference", "neg"]
             bar_labels = [
                 f"pos\nn={totals['pos']:,}",
-                "ref\n(Kazusa et al.\n(2007))",
+                "human\naverage",
                 f"neg\nn={totals['neg']:,}",
             ]
             sig_x = (0, 2)
