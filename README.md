@@ -1,4 +1,4 @@
-\# Purifying selection in the human population identifies functional RG motifs and predicts novel RNA-binding proteins
+# Purifying selection in the human population identifies functional RG motifs and predicts novel RNA-binding proteins
 
 
 
@@ -6,7 +6,7 @@ This repository contains code and data used in a submitted publication. This wil
 
 
 
-\## Repository structure
+## Repository structure
 
 ```
 
@@ -48,7 +48,7 @@ This repository contains code and data used in a submitted publication. This wil
 
 ```
 
-\## Data Flow
+## Data Flow
 
 
 
@@ -58,11 +58,11 @@ This summarizes the work done in '0\_preprocessing.ipynb' and '1\_gnomAD\_proces
 
 
 
-!\[Dataflow Diagram](docs/data\_flow.png)
+!\[Dataflow Diagram](docs/data_flow.png)
 
 
 
-\## Requirements and Installation
+## Requirements and Installation
 
 
 
@@ -70,7 +70,7 @@ All dependencies for this project are listed in the provided `environment.yml` f
 
 
 
-\### Missing file (due to file size)
+### Missing file (due to file size)
 
 
 
@@ -84,7 +84,7 @@ At the time of writing (July, 1st, 2025) this is still the latest release.
 
 
 
-\### Recommended (Using Conda)
+### Recommended (Using Conda)
 
 
 
@@ -96,7 +96,7 @@ Create the environment:
 
 
 
-\### Activate the environment:
+### Activate the environment:
 
 
 
@@ -104,7 +104,7 @@ Create the environment:
 
 
 
-\## How to use:
+## How to use:
 
 
 
@@ -112,7 +112,7 @@ To recreate this analysis, the preprocessing `0\_preprocessing\_of\_proteome.ipy
 
 
 
-\## License:
+## License:
 
 
 
@@ -120,7 +120,7 @@ see `LICENSE` file
 
 
 
-\## Contact
+## Contact
 
 
 
