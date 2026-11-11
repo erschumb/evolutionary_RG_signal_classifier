@@ -1,134 +1,71 @@
-# Purifying selection in the human population identifies functional RG motifs and predicts novel RNA-binding proteins
+# Population genetic constraint identifies functional RG motifs and predicts novel RNA-binding proteins
 
+Code and data accompanying the manuscript *"Population genetic constraint identifies functional RG motifs and predicts novel RNA-binding proteins"* (Schumbera, Morett, Cihan & Andrade-Navarro; under revision at *NAR Genomics and Bioinformatics*). A link to the publication will be added upon acceptance.
 
+## Overview
 
-This repository contains code and data used in a submitted publication. This will be updated and link to the publication once it is accepted.
-
-
+RG/RGG motifs are short, low-complexity sequences in intrinsically disordered regions that mediate RNA binding and phase separation, yet only some of them are functional. This repository uses purifying-selection signals from human population variation (gnomAD v4.1) to distinguish functional from non-functional RG motifs, and trains a Random Forest classifier on these signals to nominate novel candidate RNA-binding proteins.
 
 ## Repository structure
 
 ```
-
-|── data/                # Data stored necessary for this project
-
-│ ├── external            # External data
-
-│ ├── processed           # Processed files necessary for the statistical analysis
-
-│ ├── results             # Output files and figures
-
-│ ├── external            # External data
-
-│ ├── processed           # Processed files necessary for the statistical analysis
-
-│ ├── results             # Output files and figures
-
-├── src        # Subfigures necessary to recreate the excat figures from the publication
-
-├── figures        # Subfigures necessary to recreate the excat figures from the publication
-
-├── models        # Subfigures necessary to recreate the excat figures from the publication
-
-├── 0\_preprocessing.ipynb     # Code for processing the raw data and generating the necessary datasets
-
-├── 1\_gnomAD\_processing.ipynb             # Script for statistical analysis of phys/chem properties of RG motifs and general properties (length, impurity, etc.)
-
-├── 2\_variant\_analysis\_visualization.ipynb                 # Scripts for statistical analysis of IDR-related properties
-
-├── 3\_RF\_model\_creation.ipynb              # Scripts for statistical analysis of domain-focused analysis
-
-├── 4\_inference\_rg\_motifs.ipynb                  # Scripts for statistical analysis of detailed amino acid composition
-
-├── LICENSE               # License file
-
-├── environment.yml       # Necessary dependencies for project
-
-└── README.md             # This file
-
+├── data/
+│   ├── external/                          # Raw external data (UniProt, gnomAD, PhaSePred, …)
+│   ├── processed/                         # Processed datasets used by the analysis notebooks
+│   └── results/                           # Output tables
+├── figures/                               # Subfigures to recreate the figures of the publication
+├── models/                                # Trained Random Forest model(s)
+├── src/                                   # Helper functions used by the notebooks
+├── docs/                                  # Documentation assets (e.g. data flow diagram)
+├── 0_preprocessing.ipynb                  # Builds, cleans and annotates the proteome/RG motif datasets
+├── 1_gnomAD_processing.ipynb              # Maps gnomAD variants to RG motifs and computes constraint metrics
+├── 2_variant_analysis_visualization.ipynb # Statistical analysis and visualization of variant constraint
+├── 3_RF_model_creation.ipynb              # Training and evaluation of the Random Forest classifier
+├── 4_inference_rg_motifs.ipynb            # Prediction of functional RG motifs and novel RNA-binding candidates
+├── environment.yml                        # Conda environment
+├── LICENSE
+└── README.md
 ```
 
-## Data Flow
+## Data flow
 
+The diagram below summarizes data acquisition, processing and organization performed in `0_preprocessing.ipynb` and `1_gnomAD_processing.ipynb`, which are prerequisites for the downstream analyses.
 
+![Data flow diagram](docs/data_flow.png)
 
-The following diagram shows the data acquisition, processing and organization required for the project and required as prerequisites for running the analysis scripts.
+## Installation
 
-This summarizes the work done in '0\_preprocessing.ipynb' and '1\_gnomAD\_processing.ipynb'.
+All dependencies are listed in `environment.yml`. Using Conda:
 
+```bash
+git clone https://github.com/erschumb/evolutionary_RG_signal_classifier.git
+cd evolutionary_RG_signal_classifier
+conda env create -f environment.yml
+conda activate <env-name>   # name defined in environment.yml
+```
 
+### Data not included in this repository
 
-!\[Dataflow Diagram](docs/data_flow.png)
+Due to its size, `human_reviewed.json` from [PhaSePred](http://predict.phasep.pro/) (phase-separation propensity scores for all reviewed human proteins) is not included.
 
+- Download: <http://predict.phasep.pro/static/phasepred/database/human_reviewed.zip>
+- Version used: release of 11 Feb 2022, downloaded 13 Jun 2023 (still the latest release as of 1 Jul 2025)
+- Unzip it into `data/external/`. The exact file used can be provided on request (see [Contact](#contact)).
 
+## Usage
 
-## Requirements and Installation
+1. Run `0_preprocessing.ipynb` to create, clean and annotate the required datasets.
+2. Run `1_gnomAD_processing.ipynb` to map population variants and compute constraint metrics.
+3. Notebooks `2`–`4` can then be run, modified or extended independently of each other.
 
+## Citation
 
+If you use this code or data, please cite the publication (citation will be added upon acceptance).
 
-All dependencies for this project are listed in the provided `environment.yml` file.
+## License
 
-
-
-### Missing file (due to file size)
-
-
-
-The `human\_reviewed.json` from PhasePred containing information on the phase separation propensity of all human proteins has not been included in this repo, due to its large file size.
-
-The most recent version can be downloaded here: http://predict.phasep.pro/static/phasepred/database/human\_reviewed.zip
-
-The version used for this was the file from Feb, 11th, 2022, downloaded on June, 13th, 2023 and can be requested if necessary, see Contact.
-
-At the time of writing (July, 1st, 2025) this is still the latest release.
-
-
-
-### Recommended (Using Conda)
-
-
-
-Create the environment:
-
-
-
-```bash conda env create -f environment.yml ```
-
-
-
-### Activate the environment:
-
-
-
-```bash conda activate your-environment-name ```
-
-
-
-## How to use:
-
-
-
-To recreate this analysis, the preprocessing `0\_preprocessing\_of\_proteome.ipynb` is necessary to create/clean/annotate the necessary datasets. The statistical analyses (1-4) can be run in independent order and edited/expanded independently from each other.
-
-
-
-## License:
-
-
-
-see `LICENSE` file
-
-
+See [`LICENSE`](LICENSE).
 
 ## Contact
 
-
-
-For questions or suggestions, please contact:
-
-Eric Schumbera
-
-e.schumbera@uni-mainz.de
-
-
-
+Eric Schumbera — [e.schumbera@uni-mainz.de](mailto:e.schumbera@uni-mainz.de)
