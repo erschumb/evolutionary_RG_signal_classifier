@@ -57,6 +57,8 @@ def run_nested_cv(
     include_groups,                  # iterable of fine-group names to use
     *,
     folded_transformer_factory=None, # callable(**kw)->transformer, or None
+    estimator_factory=None,          # NEW: callable() -> unfitted sklearn estimator
+    scale_features=False,             # NEW: StandardScaler per fold (for kNN/logreg)
     n_splits=5,
     n_trees=300,
     random_state=42,
@@ -138,10 +140,22 @@ def run_nested_cv(
                 "all feature columns were all-NaN after imputation for this fold "
                 "(folded-only config where training regions had no variants?)")
  
-        rf = RandomForestClassifier(n_estimators=n_trees,
-                                    random_state=random_state, n_jobs=-1)
-        rf.fit(X_tr_i, y.loc[tr_ids].values)
-        p = rf.predict_proba(X_te_i)[:, 1]
+        # NEW: optional per-fold scaling for scale-sensitive estimators
+        if scale_features:
+            from sklearn.preprocessing import StandardScaler
+            sc = StandardScaler()
+            X_tr_i = sc.fit_transform(X_tr_i)
+            X_te_i = sc.transform(X_te_i)
+
+        # NEW: pluggable estimator
+        if estimator_factory is None:
+            model = RandomForestClassifier(n_estimators=n_trees,
+                                           random_state=random_state, n_jobs=-1)
+        else:
+            model = estimator_factory()
+
+        model.fit(X_tr_i, y.loc[tr_ids].values)
+        p = model.predict_proba(X_te_i)[:, 1]
         fold_aucs.append(roc_auc_score(y.loc[te_ids].values, p))
         oof.loc[te_ids] = p
         oof_fold.loc[te_ids] = fold_i

@@ -3103,7 +3103,7 @@ def plot_obs_exp_scatter_grouped(
 # from matplotlib.colors import TwoSlopeNorm
  
  
-def build_score_table(df, alpha=0.5, min_count=0, key_sep="->"):
+def build_score_table(df, alpha=1, min_count=0, key_sep="->"):
     """
     Build the per-substitution score table.
  
@@ -3124,11 +3124,20 @@ def build_score_table(df, alpha=0.5, min_count=0, key_sep="->"):
  
     t = df.copy()
     eps = 1e-9
-    exp_pos = t["exp_pos"].clip(lower=eps)
-    exp_neg = t["exp_neg"].clip(lower=eps)
+
+    exp_pos = t["exp_pos"] # .clip(lower=eps)
+    exp_neg = t["exp_neg"] # .clip(lower=eps)
+
+    ratio_pos = (t["obs_pos"] + alpha * exp_pos) / exp_pos
+    ratio_neg = (t["obs_neg"] + alpha * exp_neg) / exp_neg
+
  
-    ratio_pos = (t["obs_pos"] + alpha) / exp_pos
-    ratio_neg = (t["obs_neg"] + alpha) / exp_neg
+
+    #### OLD VERSION; REVISED AFTER REVIEWER COMMENTS
+    # exp_pos = t["exp_pos"].clip(lower=eps)
+    # exp_neg = t["exp_neg"].clip(lower=eps)
+    # ratio_pos = (t["obs_pos"] + alpha) / exp_pos
+    # ratio_neg = (t["obs_neg"] + alpha) / exp_neg
     t["score"] = np.log2(ratio_pos) - np.log2(ratio_neg)
  
     ratio_pos_raw = t["obs_pos"].clip(lower=eps) / exp_pos

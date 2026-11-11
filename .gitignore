@@ -19,3 +19,4 @@ esm1b/
 refs/
 data/bcftools/combined_vep_variants.tsv
 data/bcftools/combined_vep_variants_4groups.tsv
+revision/
