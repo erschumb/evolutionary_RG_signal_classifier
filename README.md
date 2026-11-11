@@ -41,7 +41,7 @@ All dependencies are listed in `environment.yml`. Using Conda:
 git clone https://github.com/erschumb/evolutionary_RG_signal_classifier.git
 cd evolutionary_RG_signal_classifier
 conda env create -f environment.yml
-conda activate <env-name>   # name defined in environment.yml
+conda activate base   # name defined in environment.yml
 ```
 
 ### Data not included in this repository
